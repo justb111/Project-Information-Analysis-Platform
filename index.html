@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能体分析平台</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div id="loginContainer" class="login-container">
+        <div class="login-card">
+            <h2>智能体分析平台</h2>
+            <input type="text" id="username" placeholder="用户名">
+            <input type="password" id="password" placeholder="密码">
+            <button id="loginBtn">登录</button>
+            <div id="loginError" class="error-msg"></div>
+        </div>
+    </div>
+
+    <!-- 主应用界面（登录后显示） -->
+    <div id="appContainer" class="app" style="display: none;">
+        <!-- 左侧导航栏 -->
+        <nav class="sidebar">
+            <div class="logo">🤖 项目信息助手</div>
+            <button class="nav-btn" data-tab="home">🏠 首页</button>
+            <button class="nav-btn" data-tab="leak">📋 项目信息查询</button>
+            <button class="nav-btn" data-tab="risk">⚠️ 项目风险分析</button>
+            <button class="nav-btn" data-tab="project">📊 项目管理助手</button>
+        </nav>
+
+        <!-- 右侧内容区 -->
+        <main class="content">
+            <!-- 左侧项目风险分析区 -->
+            <div class="content-left">
+                <!-- 首页面板 -->
+                <div id="homePanel" class="panel">
+                    <h2>项目信息助手分析平台</h2>
+                    <div class="welcome-card">
+                        <h3>欢迎使用项目信息助手</h3>
+                        <p>该助手可以提供以下功能：</p>
+                        <ul>
+                            <li>⚠️ 项目风险分析（针对现有项目对研发测试部、交付测试部任何时间段提交的bug进行分析，为用户提供建议，提前暴露项目风险）</li>
+                            <li>📋 项目信息查询（对在研项目的PD、SPD、关键器件选型表、三方预装表进行精准查询，提升用户的测试效率，提高测试质量）</li>
+                            <li>📊 项目管理助手（对在研项目各项目进行监控，计算进度偏差。也可提供节点、进度、项目管理相关知识等信息查询）</li>
+                        </ul>
+                        <p>请从左侧导航栏选择相应助手开始使用</p>
+                        <p>请从右侧AI分析助手询问相关问题，可在对应导航栏进行信息查看</p>
+                    </div>
+                    <div id="projectSummary" class="panel">
+                        <h3>项目概览</h3>
+                        <p>加载项目数据中...</p>
+                    </div>
+                </div>
+                
+                <!-- 项目信息查询面板 -->
+                <div id="leakPanel" class="panel">
+                    <h2>项目信息查询</h2>
+                    <div class="search-section">
+                        <input type="text" id="leakSearch" placeholder="搜索项目...">
+                        <button id="leakSearchBtn">搜索</button>
+                    </div>
+                    <div id="leakGroups" class="groups-container"></div>
+                </div>
+
+                <!-- 漏测详情面板 -->
+                <div id="leakDetailPanel" class="panel">
+                    <h2>漏测/不合规详情</h2>
+                    <button id="leakBackBtn">返回</button>
+                    <div id="leakDetailContent"></div>
+                </div>
+
+                <!-- 项目风险分析面板 -->
+                <div id="riskPanel" class="panel">
+                    <h2>项目风险分析</h2>
+                    <!-- 搜索栏 -->
+                    <div class="search-section" style="width: 100%; margin-bottom: 20px;">
+                        <input type="text" id="projectSearch" placeholder="搜索项目..." style="width: 80%;">
+                        <button id="searchBtn">搜索</button>
+                    </div>
+                    <!-- 主体内容区 -->
+                    <div class="risk-main-content" style="display: flex; flex-direction: column; gap: 20px;">
+                        <!-- 项目列表和分析摘要区 -->
+                        <div style="display: flex; gap: 20px;">
+                            <!-- 左侧项目列表区 -->
+                            <div class="risk-project-list" style="flex: 1; min-width: 300px;">
+                                <h3>项目列表</h3>
+                                <div id="riskProjectList" class="project-list-container" style="max-height: 400px; overflow-y: auto;">
+                                    <!-- 项目列表项将通过JavaScript动态添加 -->
+                                </div>
+                                <!-- 饼图显示区 -->
+                                <div class="charts-section" style="margin-top: 15px; margin-bottom: 15px;">
+                                    <h3 style="font-size: 14px; margin-bottom: 10px;">数据分布分析</h3>
+                                    <div class="charts-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                                        <!-- 等级分布饼图 -->
+                                        <div class="chart-card" style="background: #ffffff; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
+                                            <h4 style="margin-top: 0; margin-bottom: 8px; font-size: 13px; font-weight: 500;">1. 等级分布</h4>
+                                            <div style="display: flex; align-items: center; gap: 10px;">
+                                                <div style="width: 100px; height: 100px; flex-shrink: 0;">
+                                                    <canvas id="priorityChart" width="100" height="100" style="width: 100px; height: 100px;"></canvas>
+                                                </div>
+                                                <div style="font-size: 11px; color: #64748b; line-height: 1.6;">
+                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #ef4444; border-radius: 2px; margin-right: 4px;"></span>Block-阻塞</div>
+                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #f97316; border-radius: 2px; margin-right: 4px;"></span>Critical-严重</div>
+                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #f59e0b; border-radius: 2px; margin-right: 4px;"></span>Major-主要</div>
+                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #10b981; border-radius: 2px; margin-right: 4px;"></span>Minor-次要</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!-- 严重问题等级分布饼图 -->
+                                        <div class="chart-card" style="background: #ffffff; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
+                                            <h4 style="margin-top: 0; margin-bottom: 8px; font-size: 13px; font-weight: 500;">2. 严重问题等级分布</h4>
+                                            <div style="display: flex; align-items: center; gap: 10px;">
+                                                <div style="width: 100px; height: 100px; flex-shrink: 0;">
+                                                    <canvas id="criticalChart" width="100" height="100" style="width: 100px; height: 100px;"></canvas>
+                                                </div>
+                                                <div style="font-size: 11px; color: #64748b; line-height: 1.6;">
+                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #ef4444; border-radius: 2px; margin-right: 4px;"></span>阻塞问题</div>
+                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #f97316; border-radius: 2px; margin-right: 4px;"></span>MP BLOCK</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!-- 问题状态分布饼图 -->
+                                        <div class="chart-card" style="background: #ffffff; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
+                                            <h4 style="margin-top: 0; margin-bottom: 8px; font-size: 13px; font-weight: 500;">3. 问题状态分布</h4>
+                                            <div style="display: flex; align-items: center; gap: 10px;">
+                                                <div style="width: 100px; height: 100px; flex-shrink: 0;">
+                                                    <canvas id="statusChart" width="100" height="100" style="width: 100px; height: 100px;"></canvas>
+                                                </div>
+                                                <div style="font-size: 11px; color: #64748b; line-height: 1.5; max-height: 100px; overflow-y: auto;">
+                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #ef4444; border-radius: 2px; margin-right: 3px;"></span>Open</div>
+                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #f97316; border-radius: 2px; margin-right: 3px;"></span>In Progress</div>
+                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #f59e0b; border-radius: 2px; margin-right: 3px;"></span>Fixed</div>
+                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #10b981; border-radius: 2px; margin-right: 3px;"></span>Submitted</div>
+                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #3b82f6; border-radius: 2px; margin-right: 3px;"></span>Reopened</div>
+                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #8b5cf6; border-radius: 2px; margin-right: 3px;"></span>Modifying</div>
+                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #6b7280; border-radius: 2px; margin-right: 3px;"></span>Abandoned</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!-- 提交分布饼图 -->
+                                        <div class="chart-card" style="background: #ffffff; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
+                                            <h4 style="margin-top: 0; margin-bottom: 8px; font-size: 13px; font-weight: 500;">4. 提交分布</h4>
+                                            <div style="display: flex; align-items: center; gap: 10px;">
+                                                <div style="width: 100px; height: 100px; flex-shrink: 0;">
+                                                    <canvas id="submissionChart" width="100" height="100" style="width: 100px; height: 100px;"></canvas>
+                                                </div>
+                                                <div style="font-size: 11px; color: #64748b; line-height: 1.6;">
+                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #3b82f6; border-radius: 2px; margin-right: 4px;"></span>含交付bug</div>
+                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #10b981; border-radius: 2px; margin-right: 4px;"></span>不含交付bug</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 右侧分析展示区 -->
+                            <div class="risk-analysis-display" style="flex: 1.5; min-width: 450px;">
+                                <h3>风险分析摘要</h3>
+                                <div id="riskAnalysisSummary" class="analysis-summary-container" style="background: #f8fafc; padding: 20px; border-radius: 8px;">
+                                    <p>待生成数据分析中</p>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- 共性问题识别区 -->
+                        <div class="common-issues-section" style="width: 100%;">
+                            <h3>共性问题识别</h3>
+                            <div id="commonIssuesContainer" class="common-issues-container" style="background: #f8fafc; padding: 20px; border-radius: 8px; max-height: 300px; overflow-y: auto;">
+                                <p>正在分析共性问题...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 项目管理助手面板 -->
+                <div id="projectPanel" class="panel">
+                    <h2>项目管理助手</h2>
+                    <div class="search-section">
+                        <input type="text" id="projectMgmtSearch" placeholder="搜索项目...">
+                        <button id="projectMgmtSearchBtn">搜索</button>
+                    </div>
+                    <div class="welcome-card">
+                        <h3>项目管理助手</h3>
+                        <p>该助手可以：</p>
+                        <ul>
+                            <li>📊 对在研项目各项目进行监控，计算进度偏差</li>
+                            <li>📅 提供节点、进度相关信息查询</li>
+                            <li>💡 提供项目管理相关知识</li>
+                        </ul>
+                        <p>请使用右侧AI分析助手询问相关问题</p>
+                    </div>
+                </div>
+
+                <!-- 详情页面板 -->
+                <div id="detailPanel" class="panel">
+                    <h2>项目详情分析</h2>
+                    <button id="backBtn">返回</button>
+                    <div id="detailContent"></div>
+                </div>
+            </div>
+
+            <!-- 右侧AI聊天区 -->
+            <div class="content-right">
+                <div class="ai-chat">
+                    <div class="chat-header">
+                        <h3>AI 分析助手</h3>
+                    </div>
+                    <div class="chat-messages" id="chatMessages"></div>
+                    <div class="chat-input">
+                        <input type="text" id="aiInput" placeholder="输入分析请求...">
+                        <button id="sendBtn">发送</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/event-source-polyfill@1.0.31/src/eventsource.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+{
+  "templates": [
+    {
+      "name": "交付测试部每日提交bug",
+      "projects": {
+        "X6840": "(project = X6840-tOS16 OR project = X6840-tOS16-Aee OR project = tOS16.1 AND summary ~ X6840) AND type = Bug AND createdDate >= startOfDay() AND createdDate <= endOfDay() AND reporter in (membersOf(RT_交付测试部)) AND creator != IssueCarrier ORDER BY created ASC",
+        "X6856": "(project = X6856-tOS16-Aee OR project = X6856-tOS16 OR project = tOS16.2 AND summary ~ X6856) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6870": "(project = X6870-tOS16-Aee OR project = X6870-tOS16 OR project = tOS16.2 AND summary ~ X6870) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6895": "(project = X6895-tOS16.2 OR project = X6895-tOS16.2-Aee OR project = tOS16.2 AND summary ~ X6895) AND type = Bug reporter in (membersOf(RT_交付测试部)) AND createdDate >= startOfDay() AND creator != IssueCarrier ORDER BY created ASC"
+      },
+      "date_field": "created"
+    },
+    {
+      "name": "交付测试部bug总量",
+      "projects": {
+        "X6840": "(project = X6840-tOS16 OR project = X6840-tOS16-Aee OR project = tOS16.1 AND summary ~ X6840) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND creator != IssueCarrier ORDER BY created ASC",
+        "X6856": "(project = X6856-tOS16-Aee OR project = X6856-tOS16 OR project = tOS16.2 AND summary ~ X6856) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6870": "(project = X6870-tOS16-Aee OR project = X6870-tOS16 OR project = tOS16.2 AND summary ~ X6870) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6895": "(project = X6895-tOS16.2 OR project = X6895-tOS16.2-Aee OR project = tOS16.2 AND summary ~ X6895) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND creator != IssueCarrier ORDER BY created ASC"
+      },
+      "date_field": "created",
+      "time_condition": "created >= 2025-11-29 AND created <= 2026-11-23 AND"
+    },
+    {
+      "name": "交付测试部MP BLOCK问题",
+      "projects": {
+        "X6840": "(project = X6840-tOS16 OR project = X6840-tOS16-Aee OR project = tOS16.1 AND summary ~ X6840) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND Must Resolve = MP Block AND creator != IssueCarrier ORDER BY created ASC",
+        "X6856": "(project = X6856-tOS16-Aee OR project = X6856-tOS16 OR project = tOS16.2 AND summary ~ X6856) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6870": "(project = X6870-tOS16-Aee OR project = X6870-tOS16 OR project = tOS16.2 AND summary ~ X6870) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6895": "(project = X6895-tOS16.2 OR project = X6895-tOS16.2-Aee OR project = tOS16.2 AND summary ~ X6895) AND type = Bug AND creator != IssueCarrier AND reporter in (membersOf(RT_交付测试部)) AND Must Resolve = MP Block AND creator != IssueCarrier ORDER BY created ASC"
+      },
+      "date_field": "created",
+      "time_condition": "created >= 2025-11-29 AND created <= 2026-11-23 AND"
+    },
+    {
+      "name": "研发测试部 MP BLOCK问题",
+      "projects": {
+        "X6840": "(project = X6840-tOS16 OR project = X6840-tOS16-Aee OR project = tOS16.1 AND summary ~ X6840) AND Must Resolve = MP Block AND type = Bug AND creator != IssueCarrier ORDER BY created ASC",
+        "X6856": "(project = X6856-tOS16-Aee OR project = X6856-tOS16 OR project = tOS16.2 AND summary ~ X6856) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6870": "(project = X6870-tOS16-Aee OR project = X6870-tOS16 OR project = tOS16.2 AND summary ~ X6870) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6895": "(project = X6895-tOS16.2 OR project = X6895-tOS16.2-Aee OR project = tOS16.2 AND summary ~ X6895) AND type = Bug AND creator != IssueCarrier ) AND Must Resolve = MP Block AND creator != IssueCarrier ORDER BY created ASC"
+      },
+      "date_field": "created",
+      "time_condition": "created >= 2025-11-29 AND created <= 2026-11-23 AND"
+    },
+    {
+      "name": "研发测试部bug总量",
+      "projects": {
+        "X6840": "(project = X6840-tOS16 OR project = X6840-tOS16-Aee OR project = tOS16.1 AND summary ~ X6840) AND type = Bug AND creator != IssueCarrier ORDER BY created ASC",
+        "X6856": "(project = X6856-tOS16-Aee OR project = X6856-tOS16 OR project = tOS16.2 AND summary ~ X6856) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6870": "(project = X6870-tOS16-Aee OR project = X6870-tOS16 OR project = tOS16.2 AND summary ~ X6870) AND type = Bug AND reporter in (membersOf(RT_交付测试部)) AND status = Verified AND creator != IssueCarrier ORDER BY created ASC",
+        "X6895": "(project = X6895-tOS16.2 OR project = X6895-tOS16.2-Aee OR project = tOS16.2 AND summary ~ X6895) AND type = Bug AND creator != IssueCarrier "
+      },
+      "date_field": "created",
+      "time_condition": "created >= 2025-11-29 AND created <= 2026-11-23 AND"
+    }
+  ]
+}

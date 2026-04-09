@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jira 风险分析工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+        }
+        
+        .input-section {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        .chat-section {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .message {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        
+        .message-header {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+        
+        .message-content {
+            margin-bottom: 10px;
+        }
+        
+        .thinking-content {
+            background-color: #e8f4f8;
+            padding: 12px;
+            border-radius: 6px;
+            font-style: italic;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .answer-content {
+            background-color: #f0f8f0;
+            padding: 12px;
+            border-radius: 6px;
+            color: #2c3e50;
+        }
+        
+        .loading {
+            display: inline-block;
+            margin-right: 10px;
+        }
+        
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .collapsible {
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .collapsible::before {
+            content: '▼';
+            display: inline-block;
+            margin-right: 5px;
+            transition: transform 0.3s;
+        }
+        
+        .collapsible.collapsed::before {
+            transform: rotate(-90deg);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Jira 风险分析工具</h1>
+        
+        <div class="input-section">
+            <div class="input-group">
+                <input type="text" id="userQuery" placeholder="请输入查询，例如：X6840 本周的高风险 Bug">
+                <button id="analyzeBtn">分析</button>
+            </div>
+            <div class="input-group">
+                <input type="text" id="projectKey" placeholder="项目键（可选）">
+                <input type="text" id="conversationId" placeholder="会话ID（可选）" value="default">
+            </div>
+        </div>
+        
+        <div class="chat-section" id="chatMessages">
+            <!-- 消息将在这里动态添加 -->
+        </div>
+    </div>
+    
+    <script>
+        // 生成唯一会话 ID
+        function generateConversationId() {
+            return 'user-' + Date.now();
+        }
+        
+        // 当前会话 ID
+        let conversationId = document.getElementById('conversationId').value || generateConversationId();
+        document.getElementById('conversationId').value = conversationId;
+        
+        // 分析按钮点击事件
+        document.getElementById('analyzeBtn').addEventListener('click', analyze);
+        
+        // 回车触发分析
+        document.getElementById('userQuery').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                analyze();
+            }
+        });
+        
+        function analyze() {
+            const userQuery = document.getElementById('userQuery').value.trim();
+            const projectKey = document.getElementById('projectKey').value.trim();
+            
+            if (!userQuery) {
+                alert('请输入查询内容');
+                return;
+            }
+            
+            // 添加用户消息
+            addMessage('用户', userQuery);
+            
+            // 添加助手消息
+            const assistantMessageId = addMessage('助手', '');
+            const assistantMessage = document.getElementById(assistantMessageId);
+            
+            // 添加思考和回答区域
+            const thinkingId = 'thinking-' + Date.now();
+            const answerId = 'answer-' + Date.now();
+            
+            assistantMessage.innerHTML = `
+                <div class="message-header collapsible" onclick="toggleCollapse('${thinkingId}')">深度思考</div>
+                <div id="${thinkingId}" class="thinking-content">
+                    <div class="loading">AI 正在思考...</div>
+                </div>
+                <div id="${answerId}" class="answer-content">
+                    <div class="loading">AI 正在生成回答...</div>
+                </div>
+            `;
+            
+            // 滚动到底部
+            scrollToBottom();
+            
+            // 构建 API URL
+            const sseUrl = new URL('/api/analyze', window.location.origin);
+            sseUrl.searchParams.append('user_query', userQuery);
+            sseUrl.searchParams.append('project_key', projectKey);
+            sseUrl.searchParams.append('conversation_id', conversationId);
+            const url = sseUrl.toString();
+            
+            // 建立 SSE 连接
+            const eventSource = new EventSource(url);
+            
+            // 处理消息
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'thinking') {
+                        // 更新思考内容
+                        const thinkingElement = document.getElementById(thinkingId);
+                        if (thinkingElement) {
+                            // 移除加载动画
+                            if (thinkingElement.querySelector('.loading')) {
+                                thinkingElement.innerHTML = '';
+                            }
+                            thinkingElement.innerHTML += data.content;
+                            scrollToBottom();
+                        }
+                    } else if (data.type === 'answer') {
+                        // 更新回答内容
+                        const answerElement = document.getElementById(answerId);
+                        if (answerElement) {
+                            // 移除加载动画
+                            if (answerElement.querySelector('.loading')) {
+                                answerElement.innerHTML = '';
+                            }
+                            answerElement.innerHTML += data.content;
+                            scrollToBottom();
+                        }
+                    } else if (data.type === 'error') {
+                        // 显示错误信息
+                        const answerElement = document.getElementById(answerId);
+                        if (answerElement) {
+                            answerElement.innerHTML = `<span style="color: red;">错误: ${data.content}</span>`;
+                            scrollToBottom();
+                        }
+                    }
+                } catch (error) {
+                    console.error('解析 SSE 消息失败:', error);
+                }
+            };
+            
+            // 处理错误
+            eventSource.onerror = function(error) {
+                console.error('SSE 连接错误:', error);
+                eventSource.close();
+                
+                const answerElement = document.getElementById(answerId);
+                if (answerElement) {
+                    answerElement.innerHTML = '<span style="color: red;">连接错误，请稍后重试</span>';
+                    scrollToBottom();
+                }
+            };
+            
+            // 处理完成
+            eventSource.addEventListener('done', function() {
+                eventSource.close();
+            });
+        }
+        
+        // 添加消息
+        function addMessage(sender, content) {
+            const messageId = 'message-' + Date.now();
+            const chatMessages = document.getElementById('chatMessages');
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.id = messageId;
+            messageDiv.className = 'message';
+            messageDiv.innerHTML = `
+                <div class="message-header">${sender}</div>
+                <div class="message-content">${content}</div>
+            `;
+            
+            chatMessages.appendChild(messageDiv);
+            scrollToBottom();
+            return messageId;
+        }
+        
+        // 滚动到底部
+        function scrollToBottom() {
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // 切换折叠状态
+        function toggleCollapse(elementId) {
+            const element = document.getElementById(elementId);
+            const header = element.previousElementSibling;
+            
+            if (element.style.display === 'none') {
+                element.style.display = 'block';
+                header.classList.remove('collapsed');
+            } else {
+                element.style.display = 'none';
+                header.classList.add('collapsed');
+            }
+        }
+    </script>
+</body>
+</html>
