@@ -1,0 +1,30 @@
+{
+  "name": "jira_risk",
+  "version": "1.0.0",
+  "description": "这是一个基于Flask和AI的项目风险分析助手，用于分析项目风险和Bug情况，为用户提供专业的分析建议。",
+  "main": "decode_mojibake.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/justb111/Project-Information-Analysis-Platform.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/justb111/Project-Information-Analysis-Platform/issues"
+  },
+  "homepage": "https://github.com/justb111/Project-Information-Analysis-Platform#readme",
+  "dependencies": {
+    "iconv-lite": "^0.7.2"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,56 @@
+INFO:storage_manager:对象存储管理器初始化完成，基础路径: E:\AI\test2\jira_risk\uploads
+INFO:werkzeug:[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5002
+ * Running on http://192.168.2.22:5002
+INFO:werkzeug:[33mPress CTRL+C to quit[0m
+[WSGI] PATH_INFO: /api/progress/upload, REQUEST_METHOD: POST
+INFO:werkzeug:127.0.0.1 - - [24/Apr/2026 02:09:07] "POST /api/progress/upload HTTP/1.1" 200 -
+[WSGI] PATH_INFO: /api/progress/data/661613df-e630-4de4-8c42-9276b75b48bb, REQUEST_METHOD: GET
+INFO:werkzeug:127.0.0.1 - - [24/Apr/2026 02:09:07] "GET /api/progress/data/661613df-e630-4de4-8c42-9276b75b48bb HTTP/1.1" 200 -
+[WSGI] PATH_INFO: /api/progress/analyze/661613df-e630-4de4-8c42-9276b75b48bb, REQUEST_METHOD: GET
+[AI_DEBUG] 开始AI服务调用，URL: https://hk-intra-paas.transsion.com/tranai-proxy/v1/chat/completions
+[AI_DEBUG] 请求数据大小: 534 字节 (0.5 KB)
+[AI_DEBUG] 消息数量: 2
+[AI_DEBUG] 最后一条消息内容长度: 120 字符
+[AI_DEBUG] 输出max_tokens限制: 4096
+[AI_DEBUG] 流式模式: True, 超时: 600秒
+[AI_DEBUG] 请求头: Authorization=Bearer sk_0f04e27baf..., X-USER-NO=JIRA_RISK_SERVER
+[AI_DEBUG] 动态获取的变量: AI_API_KEY长度=58, X_USER_NO=JIRA_RISK_SERVER, X_USER_NAME长度=11
+[AI_DEBUG] AI调用尝试 1/3
+[AI_DEBUG] AI响应状态码: 200
+[AI_DEBUG] AI服务调用成功!
+INFO:werkzeug:127.0.0.1 - - [24/Apr/2026 02:09:12] "GET /api/progress/analyze/661613df-e630-4de4-8c42-9276b75b48bb HTTP/1.1" 200 -
+[WSGI] PATH_INFO: /, REQUEST_METHOD: GET
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:09:56] "GET / HTTP/1.1" 200 -
+[WSGI] PATH_INFO: /style.css, REQUEST_METHOD: GET
+[WSGI] PATH_INFO: /script.js, REQUEST_METHOD: GET
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:09:56] "GET /style.css HTTP/1.1" 200 -
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:09:56] "GET /script.js?v=2.20 HTTP/1.1" 200 -
+[WSGI] PATH_INFO: /, REQUEST_METHOD: GET
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:10:25] "GET / HTTP/1.1" 200 -
+[WSGI] PATH_INFO: /style.css, REQUEST_METHOD: GET
+[WSGI] PATH_INFO: /script.js, REQUEST_METHOD: GET
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:10:25] "GET /style.css HTTP/1.1" 200 -
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:10:25] "GET /script.js?v=2.20 HTTP/1.1" 200 -
+[WSGI] PATH_INFO: /@vite/client, REQUEST_METHOD: GET
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:10:25] "[33mGET /@vite/client HTTP/1.1[0m" 404 -
+[WSGI] PATH_INFO: /api/progress/upload, REQUEST_METHOD: POST
+E:\AI\test2\jira_risk\.venv\Lib\site-packages\openpyxl\styles\stylesheet.py:237: UserWarning: Workbook contains no default style, apply openpyxl's default
+  warn("Workbook contains no default style, apply openpyxl's default")
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:10:47] "POST /api/progress/upload HTTP/1.1" 200 -
+[WSGI] PATH_INFO: /api/progress/data/60ef0936-421d-4c37-afb4-63cc8d99dddd, REQUEST_METHOD: GET
+[WSGI] PATH_INFO: /api/progress/analyze/60ef0936-421d-4c37-afb4-63cc8d99dddd, REQUEST_METHOD: GET
+[AI_DEBUG] 开始AI服务调用，URL: https://hk-intra-paas.transsion.com/tranai-proxy/v1/chat/completions
+[AI_DEBUG] 请求数据大小: 569 字节 (0.6 KB)
+[AI_DEBUG] 消息数量: 2
+[AI_DEBUG] 最后一条消息内容长度: 143 字符
+[AI_DEBUG] 输出max_tokens限制: 4096
+[AI_DEBUG] 流式模式: True, 超时: 600秒
+[AI_DEBUG] 请求头: Authorization=Bearer sk_0f04e27baf..., X-USER-NO=JIRA_RISK_SERVER
+[AI_DEBUG] 动态获取的变量: AI_API_KEY长度=58, X_USER_NO=JIRA_RISK_SERVER, X_USER_NAME长度=11
+[AI_DEBUG] AI调用尝试 1/3
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:10:47] "GET /api/progress/data/60ef0936-421d-4c37-afb4-63cc8d99dddd HTTP/1.1" 200 -
+[AI_DEBUG] AI响应状态码: 200
+[AI_DEBUG] AI服务调用成功!
+INFO:werkzeug:192.168.2.22 - - [24/Apr/2026 02:10:51] "GET /api/progress/analyze/60ef0936-421d-4c37-afb4-63cc8d99dddd HTTP/1.1" 200 -

@@ -1,0 +1,1 @@
+T7: PDF扫描件测试需pytesseract+pillow，当前环境未配置，跳过OCR测试。

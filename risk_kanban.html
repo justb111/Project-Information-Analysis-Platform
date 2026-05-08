@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>遗留问题风险看板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+
+/* === Header === */
+.header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 200; height: 60px; box-shadow: 0 2px 16px rgba(0,0,0,0.25); }
+.header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.header h1 { font-size: 17px; font-weight: 700; color: #fff; letter-spacing: 0.5px; white-space: nowrap; }
+.header .header-summary { font-size: 12px; color: #8899b4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.risk-badge-header { display: inline-flex; align-items: center; gap: 5px; padding: 4px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.risk-badge-header.low { background: rgba(22,163,74,0.15); color: #4ade80; border: 1px solid rgba(22,163,74,0.3); }
+.risk-badge-header.medium { background: rgba(234,88,12,0.15); color: #fb923c; border: 1px solid rgba(234,88,12,0.3); }
+.risk-badge-header.high { background: rgba(220,38,38,0.15); color: #f87171; border: 1px solid rgba(220,38,38,0.3); }
+
+.btn { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all .2s; }
+.btn-primary { background: #6366f1; color: #fff; }
+.btn-primary:hover { background: #4f46e5; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99,102,241,0.4); }
+.btn-sm { background: rgba(255,255,255,0.1); color: #c7d2fe; border: 1px solid rgba(255,255,255,0.12); }
+.btn-sm:hover { background: rgba(255,255,255,0.18); }
+
+/* === Tabs === */
+.tab-bar { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 0 32px; display: flex; gap: 0; position: sticky; top: 60px; z-index: 150; box-shadow: 0 1px 3px rgba(0,0,0,0.04); overflow-x: auto; }
+.tab-item { padding: 12px 20px; font-size: 13px; font-weight: 600; color: #64748b; cursor: pointer; border-bottom: 3px solid transparent; transition: all .2s; white-space: nowrap; user-select: none; }
+.tab-item:hover { color: #334155; background: #f8fafc; }
+.tab-item.active { color: #6366f1; border-bottom-color: #6366f1; background: #f8fafc; }
+
+/* === Config Panel === */
+.config-panel { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 0 32px; max-height: 0; overflow: hidden; transition: max-height .35s ease, padding .25s ease; }
+.config-panel.open { max-height: 600px; padding: 16px 32px; }
+.config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.config-group { display: flex; flex-direction: column; gap: 3px; }
+.config-group label { font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+.config-group input { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 10px; color: #1a1a2e; font-size: 13px; outline: none; transition: border-color .2s; }
+.config-group input:focus { border-color: #6366f1; background: #fff; }
+.config-actions { margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* === Container === */
+.container { max-width: 1500px; margin: 0 auto; padding: 20px 32px; }
+
+/* === Tab Content === */
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* === Status Messages === */
+.status-msg { display: none; padding: 10px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+.status-msg.error { display: block; background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
+.status-msg.success { display: block; background: #f0fdf4; border: 1px solid #bbf7d0; color: #16a34a; }
+
+/* === Loading === */
+.loading-overlay { display: none; position: fixed; inset: 0; background: rgba(255,255,255,0.88); z-index: 999; justify-content: center; align-items: center; flex-direction: column; gap: 16px; }
+.loading-overlay.active { display: flex; }
+.loading-spinner { width: 44px; height: 44px; border: 4px solid #e2e8f0; border-top-color: #6366f1; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 15px; color: #64748b; }
+
+/* === Empty State === */
+.empty-state { display: none; text-align: center; padding: 80px 32px; color: #64748b; }
+.empty-state.active { display: block; }
+.empty-state .icon { font-size: 56px; margin-bottom: 12px; }
+.empty-state h2 { font-size: 20px; margin-bottom: 6px; color: #1a1a2e; }
+
+/* ================================================================ */
+/* TAB 1: 风险总览仪表盘                                             */
+/* ================================================================ */
+
+/* Risk Banner */
+.risk-banner { background: linear-gradient(135deg, #fef2f2, #ffe4e6); border: 1px solid #fecaca; border-left: 5px solid #e53935; border-radius: 12px; padding: 16px 22px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(229,57,53,0.08); }
+.risk-banner .banner-title { font-size: 16px; font-weight: 700; color: #b91c1c; margin-bottom: 6px; }
+.risk-banner .banner-text { font-size: 13px; color: #7f1d1d; line-height: 1.6; }
+
+/* Metric Cards (6) */
+.metric-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 20px; }
+.metric-card { border-radius: 12px; padding: 16px 18px; color: #fff; position: relative; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: transform .2s, box-shadow .2s; }
+.metric-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.12); }
+.metric-card .m-num { font-size: 30px; font-weight: 800; line-height: 1.1; letter-spacing: -0.5px; }
+.metric-card .m-label { font-size: 12px; opacity: 0.85; margin-top: 2px; font-weight: 500; }
+.metric-card .m-sub { font-size: 11px; opacity: 0.65; margin-top: 2px; }
+.metric-card .m-icon { position: absolute; right: 12px; bottom: 10px; font-size: 36px; opacity: 0.15; }
+.metric-card.bg-blue { background: linear-gradient(135deg, #1890ff, #096dd9); }
+.metric-card.bg-red { background: linear-gradient(135deg, #e53935, #c62828); }
+.metric-card.bg-orange { background: linear-gradient(135deg, #fa8c16, #d46b08); }
+.metric-card.bg-yellow { background: linear-gradient(135deg, #fdd835, #f9a825); color: #333; }
+.metric-card.bg-darkred { background: linear-gradient(135deg, #c62828, #8e0000); }
+.metric-card.bg-darkorange { background: linear-gradient(135deg, #f97316, #c2410c); }
+
+/* Chart Rows */
+.chart-row { display: grid; gap: 14px; margin-bottom: 16px; }
+.chart-row.row-3 { grid-template-columns: 1fr 1fr 1.8fr; }
+.chart-row.row-2 { grid-template-columns: 1fr 1fr; }
+.chart-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.chart-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: #334155; display: flex; align-items: center; gap: 6px; }
+.chart-container { position: relative; height: 240px; }
+
+/* ================================================================ */
+/* TAB 2: 分模块风险看板                                              */
+/* ================================================================ */
+.section-desc { font-size: 13px; color: #64748b; margin-bottom: 14px; padding: 10px 16px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; line-height: 1.6; }
+.section-desc .highlight-red { color: #e53935; font-weight: 600; }
+.section-desc .highlight-orange { color: #fa8c16; font-weight: 600; }
+.section-desc .highlight-blue { color: #1890ff; font-weight: 600; }
+
+/* Module Risk Table */
+.mod-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid #e2e8f0; background: #fff; max-height: 700px; overflow-y: auto; }
+.mod-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mod-table thead th { background: #f8fafc; padding: 10px 12px; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0; font-size: 12px; position: sticky; top: 0; z-index: 5; }
+.mod-table tbody td { padding: 9px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.mod-table tbody tr { transition: background .1s; }
+.mod-table tbody tr:hover { background: #f8fafc; }
+.mod-table .row-high { background: #fff5f5; border-left: 4px solid #e53935; }
+.mod-table .row-medium { background: #fffcf0; border-left: 4px solid #fa8c16; }
+.mod-table .row-normal { border-left: 4px solid transparent; }
+.mod-table .risk-score { font-weight: 700; font-size: 14px; }
+.mod-table .risk-tag { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.mod-table .risk-tag.high { background: #fef2f2; color: #e53935; }
+.mod-table .risk-tag.medium { background: #fff7ed; color: #fa8c16; }
+.mod-table .risk-tag.low { background: #f0fdf4; color: #16a34a; }
+.mod-table .key-cell { font-family: 'SF Mono', 'Fira Code', Consolas, monospace; font-weight: 600; font-size: 12px; white-space: nowrap; }
+.mod-table .key-cell a { color: #e53935; text-decoration: none; }
+.mod-table .key-cell a:hover { text-decoration: underline; }
+.mod-table .tag-mpb { background: #fef2f2; color: #e53935; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.mod-table .tag-must { background: #fff7ed; color: #fa8c16; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+
+/* ================================================================ */
+/* TAB 3: 重点问题跟踪                                                */
+/* ================================================================ */
+
+/* MP Block Cards */
+.mpb-card-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.mpb-card { background: #fff; border: 1px solid #e2e8f0; border-left: 4px solid #e53935; border-radius: 8px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); transition: box-shadow .2s; }
+.mpb-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+.mpb-card .mpb-key { font-family: 'SF Mono', 'Fira Code', Consolas, monospace; font-weight: 700; font-size: 13px; }
+.mpb-card .mpb-key a { color: #e53935; text-decoration: none; }
+.mpb-card .mpb-key a:hover { text-decoration: underline; }
+.mpb-card .mpb-comp { font-size: 11px; color: #64748b; margin: 2px 0; }
+.mpb-card .mpb-sum { font-size: 12px; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Filter Bar for Tab 3 */
+.filter-bar { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+.filter-group { display: flex; align-items: center; gap: 5px; }
+.filter-group label { font-size: 12px; color: #64748b; font-weight: 600; white-space: nowrap; }
+.filter-group select { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 5px 10px; color: #1a1a2e; font-size: 13px; outline: none; min-width: 100px; }
+.filter-group select:focus { border-color: #6366f1; }
+.filter-group input { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 5px 10px; color: #1a1a2e; font-size: 13px; outline: none; min-width: 160px; }
+.filter-group input:focus { border-color: #6366f1; }
+.filter-group .filter-check { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.filter-group .filter-check input { min-width: auto; margin: 0; }
+.filter-count { font-size: 12px; color: #94a3b8; margin-left: auto; white-space: nowrap; }
+.clear-btn { background: none; border: 1px solid #e2e8f0; border-radius: 6px; padding: 5px 10px; color: #64748b; cursor: pointer; font-size: 12px; transition: all .2s; }
+.clear-btn:hover { border-color: #e53935; color: #e53935; background: #fef2f2; }
+
+/* Tracking Table */
+.track-table-wrap { overflow-y: auto; max-height: 560px; border-radius: 10px; border: 1px solid #e2e8f0; background: #fff; }
+.track-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.track-table thead th { background: #f8fafc; padding: 10px 10px; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0; font-size: 12px; position: sticky; top: 0; z-index: 5; }
+.track-table tbody td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.track-table .row-blinker { background: #fff5f5; border-left: 4px solid #e53935; }
+.track-table .row-normal { border-left: 4px solid transparent; }
+.track-table tbody tr:hover { background: #f8fafc; }
+.track-table .key-cell { font-family: 'SF Mono', 'Fira Code', Consolas, monospace; font-weight: 700; font-size: 12px; color: #e53935; white-space: nowrap; }
+.track-table .key-cell a { color: #e53935; text-decoration: none; }
+.track-table .key-cell a:hover { text-decoration: underline; }
+.track-table .cell-comp { font-size: 12px; color: #64748b; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-table .cell-summary { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Status badges */
+.stat-badge { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.stat-badge.open { background: #fef2f2; color: #e53935; }
+.stat-badge.in-progress { background: #eff6ff; color: #1890ff; }
+.stat-badge.reopened { background: #fff7ed; color: #fa8c16; }
+.stat-badge.fixed, .stat-badge.closed, .stat-badge.done { background: #f0fdf4; color: #16a34a; }
+.stat-badge.default { background: #f1f5f9; color: #64748b; }
+
+/* ================================================================ */
+/* TAB 4: 风险趋势看板                                                */
+/* ================================================================ */
+.trend-chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+
+/* ================================================================ */
+/* TAB 5: 结论与建议                                                  */
+/* ================================================================ */
+.conclusion-banner { background: linear-gradient(135deg, #fef2f2, #ffe4e6); border: 1px solid #fecaca; border-left: 5px solid #e53935; border-radius: 12px; padding: 16px 22px; margin-bottom: 20px; }
+.conclusion-banner .cb-title { font-size: 16px; font-weight: 700; color: #b91c1c; margin-bottom: 6px; }
+.conclusion-banner .cb-text { font-size: 13px; color: #7f1d1d; line-height: 1.6; }
+
+.conclusion-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+.conclusion-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); transition: box-shadow .2s; }
+.conclusion-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+.conclusion-card h4 { font-size: 13px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 5px; color: #1e293b; }
+.conclusion-card ul { list-style: none; padding: 0; }
+.conclusion-card li { font-size: 12px; color: #475569; padding: 4px 0; line-height: 1.5; position: relative; padding-left: 14px; border-bottom: 1px solid #f1f5f9; }
+.conclusion-card li:last-child { border-bottom: none; }
+.conclusion-card li::before { content: '•'; position: absolute; left: 0; color: #94a3b8; }
+.conclusion-card .highlight { color: #e53935; font-weight: 600; }
+.conclusion-card .good { color: #16a34a; font-weight: 600; }
+.conclusion-card .warn { color: #fa8c16; font-weight: 600; }
+.conclusion-card .info { color: #1890ff; font-weight: 600; }
+
+.bottom-banner { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 14px 20px; font-size: 12px; color: #1e40af; line-height: 1.7; }
+
+/* ================================================================ */
+/* Responsive                                                        */
+/* ================================================================ */
+@media (max-width: 1200px) {
+  .metric-grid { grid-template-columns: repeat(3, 1fr); }
+  .chart-row.row-3 { grid-template-columns: 1fr 1fr; }
+  .conclusion-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 992px) {
+  .chart-row.row-3 { grid-template-columns: 1fr; }
+  .chart-row.row-2 { grid-template-columns: 1fr; }
+  .trend-chart-row { grid-template-columns: 1fr; }
+  .header { padding: 0 16px; }
+  .tab-bar { padding: 0 16px; }
+  .container { padding: 16px; }
+  .metric-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .metric-grid { grid-template-columns: 1fr; }
+  .conclusion-grid { grid-template-columns: 1fr; }
+  .header h1 { font-size: 14px; }
+  .header .header-summary { display: none; }
+  .tab-item { padding: 10px 12px; font-size: 12px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ========================= HEADER ========================= -->
+<header class="header">
+  <div class="header-left">
+    <h1>遗留问题风险看板</h1>
+    <span class="header-summary" id="headerSummary">加载中...</span>
+  </div>
+  <div class="header-right">
+    <span class="risk-badge-header" id="headerRiskBadge">—</span>
+    <button class="btn btn-sm" onclick="toggleConfig()">⚙️ 字段映射</button>
+    <button class="btn btn-sm" onclick="location.reload()">🔄 刷新</button>
+  </div>
+</header>
+
+<!-- ========================= TABS ========================= -->
+<div class="tab-bar" id="tabBar">
+  <div class="tab-item active" onclick="switchTab(1)">📊 风险总览仪表盘</div>
+  <div class="tab-item" onclick="switchTab(2)">📋 分模块风险看板</div>
+  <div class="tab-item" onclick="switchTab(3)">🎯 重点问题跟踪</div>
+  <div class="tab-item" onclick="switchTab(4)">📈 风险趋势看板</div>
+  <div class="tab-item" onclick="switchTab(5)">📌 结论与建议</div>
+</div>
+
+<!-- ========================= CONFIG ========================= -->
+<div class="config-panel" id="configPanel">
+  <div class="config-grid">
+    <div class="config-group"><label>Must_Resolve</label><input id="fldMustResolve" value="Must_Resolve"></div>
+    <div class="config-group"><label>Tag</label><input id="fldTag" value="Tag"></div>
+    <div class="config-group"><label>Affect_Project</label><input id="fldAffectProject" value="Affect_Project"></div>
+    <div class="config-group"><label>Issue_Category</label><input id="fldIssueCategory" value="Issue_Category"></div>
+    <div class="config-group"><label>Component_s</label><input id="fldComponent" value="Component_s"></div>
+    <div class="config-group"><label>Assignee</label><input id="fldAssignee" value="Assignee"></div>
+    <div class="config-group"><label>Labels</label><input id="fldLabels" value="Labels"></div>
+    <div class="config-group"><label>Jira URL</label><input id="fldJiraUrl" value="https://jira/browse/"></div>
+  </div>
+  <div class="config-actions">
+    <button class="btn btn-primary" onclick="applyFieldMapping()">✅ 应用映射</button>
+    <span style="font-size:12px;color:#94a3b8">修改字段名后点击"应用映射"重新渲染所有图表和表格</span>
+  </div>
+</div>
+
+<!-- ========================= LOADING ========================= -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text" id="loadingText">正在加载数据...</div>
+</div>
+
+<!-- ========================= EMPTY ========================= -->
+<div class="empty-state active" id="emptyState">
+  <div class="icon">📊</div>
+  <h2>暂无数据</h2>
+  <p style="color:#94a3b8;font-size:14px">请先在主应用中查询项目风险分析，然后通过"打开风险看板"按钮访问此页面。</p>
+</div>
+
+<!-- ========================= DASHBOARD ========================= -->
+<div id="dashboard">
+  <div class="container">
+    <div id="statusMsg" class="status-msg"></div>
+
+    <!-- ===================== TAB 1: 风险总览 ===================== -->
+    <div class="tab-content active" id="tab1">
+      <div id="riskBanner"></div>
+      <div class="metric-grid" id="metricCards"></div>
+      <div class="chart-row row-3" id="chartRow1">
+        <div class="chart-card"><h3>🔴 Bug 等级分布</h3><div class="chart-container"><canvas id="chart1a"></canvas></div></div>
+        <div class="chart-card"><h3>🟠 风险类型分布</h3><div class="chart-container"><canvas id="chart1b"></canvas></div></div>
+        <div class="chart-card"><h3>🔥 Top15 模块风险热力图</h3><div class="chart-container"><canvas id="chart1c"></canvas></div></div>
+      </div>
+      <div class="chart-row row-2" id="chartRow2">
+        <div class="chart-card"><h3>📊 Bug 状态分布</h3><div class="chart-container"><canvas id="chart1d"></canvas></div></div>
+        <div class="chart-card"><h3>📋 问题类别分布</h3><div class="chart-container"><canvas id="chart1e"></canvas></div></div>
+      </div>
+    </div>
+
+    <!-- ===================== TAB 2: 分模块风险 ===================== -->
+    <div class="tab-content" id="tab2">
+      <div class="section-desc" id="sectionDesc2">
+        <strong>风险得分</strong> = <span class="highlight-red">Blocker × 3</span> + <span class="highlight-orange">Critical × 2</span> + <span class="highlight-blue">Major × 1</span> &nbsp;|&nbsp;
+        <span class="highlight-red">■ 高风险</span> (得分≥10) &nbsp; <span class="highlight-orange">■ 中风险</span> (得分5-9) &nbsp; ■ 低风险 (得分&lt;5)
+      </div>
+      <div class="mod-table-wrap" id="moduleTableWrap">
+        <table class="mod-table" id="moduleRiskTable">
+          <thead><tr>
+            <th>模块/Component</th><th>风险类型</th><th>风险等级</th><th>风险得分</th>
+            <th>Blocker</th><th>Critical</th><th>Major</th><th>MP Block</th><th>用户必解</th><th>重点 Bug</th>
+          </tr></thead>
+          <tbody id="moduleRiskBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===================== TAB 3: 重点跟踪 ===================== -->
+    <div class="tab-content" id="tab3">
+      <div id="mpbCards"></div>
+      <div class="filter-bar" id="filterBar3">
+        <div class="filter-group"><label>Priority</label><select id="f3Priority" onchange="applyFilter3()"><option value="">全部</option></select></div>
+        <div class="filter-group"><label>风险类型</label><select id="f3Risk" onchange="applyFilter3()"><option value="">全部</option></select></div>
+        <div class="filter-group"><label>Status</label><select id="f3Status" onchange="applyFilter3()"><option value="">全部</option></select></div>
+        <div class="filter-group"><label class="filter-check"><input type="checkbox" id="f3OnlyMPB" onchange="applyFilter3()"> 仅 MP Block</label></div>
+        <div class="filter-group"><label class="filter-check"><input type="checkbox" id="f3OnlyMust" onchange="applyFilter3()"> 仅用户必解</label></div>
+        <div class="filter-group"><input type="text" id="f3Search" placeholder="🔍 搜索 Key / 摘要..." oninput="applyFilter3()"></div>
+        <button class="clear-btn" onclick="clearFilter3()">✕ 重置</button>
+        <span class="filter-count" id="f3Count"></span>
+      </div>
+      <div class="track-table-wrap" id="trackTableWrap">
+        <table class="track-table" id="trackTable3">
+          <thead><tr>
+            <th>Bug Key</th><th>所属模块</th><th>等级</th><th>风险类型</th><th>问题摘要</th><th>标记</th><th>状态</th><th>负责人</th>
+          </tr></thead>
+          <tbody id="trackBody3"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===================== TAB 4: 风险趋势 ===================== -->
+    <div class="tab-content" id="tab4">
+      <div class="chart-card" style="margin-bottom:14px">
+        <h3>📈 Bug 提交趋势（按周）</h3>
+        <div class="chart-container" style="height:280px"><canvas id="chart4a"></canvas></div>
+      </div>
+      <div class="trend-chart-row">
+        <div class="chart-card"><h3>🔴 各周 Blocker / Critical 分布</h3><div class="chart-container"><canvas id="chart4b"></canvas></div></div>
+        <div class="chart-card"><h3>✅ 已修复 vs 总提交对比</h3><div class="chart-container"><canvas id="chart4c"></canvas></div></div>
+      </div>
+    </div>
+
+    <!-- ===================== TAB 5: 结论建议 ===================== -->
+    <div class="tab-content" id="tab5">
+      <div id="conclusionBanner"></div>
+      <div class="conclusion-grid" id="conclusionGrid"></div>
+      <div class="bottom-banner" id="bottomBanner">
+        <strong>💡 看板说明：</strong>
+        本看板基于 Jira 数据自动生成，支持字段映射配置、多维度筛选、图表联动。<br>
+        • Bug Key 均可点击跳转 Jira &nbsp;|&nbsp; • 模块风险得分 = Blocker×3 + Critical×2 + Major×1 &nbsp;|&nbsp; • 趋势图数据按周聚合 Created 字段<br>
+        • 结论与建议基于实际统计数据动态生成 &nbsp;|&nbsp; • 所有筛选结果与表格实时联动
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ============================================================
+// DATA & CONFIG
+// ============================================================
+let RAW_DATA = [];
+
+const CATEGORY_MAP = {
+  'Functions':'功能','Performance':'性能','Experience':'体验','UI':'UI',
+  'Stability':'稳定性','效果':'效果','Standard':'标准化','OS':'其他',
+  'Translation':'翻译','Security':'安全性'
+};
+const VERSION_NAMES = ['用户版本1','用户版本2','用户版本3','用户版本4','用户版本5','用户版本6'];
+const PRIORITY_ORDER = {'Blocker':0,'Block':1,'Critical':2,'High':3,'Major':4,'Medium':5,'Minor':6,'Low':7,'Trivial':8};
+const PRIORITY_COLORS = {'Blocker':'#e53935','Critical':'#fa8c16','Major':'#fdd835','Minor':'#90a4ae','Block':'#e53935','High':'#fdd835','Medium':'#90a4ae','Low':'#90a4ae','Trivial':'#90a4ae'};
+const VERSION_EMOJI = {'用户版本1':'🔴','用户版本2':'🟠','用户版本3':'🟡','用户版本4':'🟢','用户版本5':'🔵','用户版本6':'⚪'};
+const VERSION_CLASS = {'用户版本1':'v1','用户版本2':'v2','用户版本3':'v3','用户版本4':'v4','用户版本5':'v5','用户版本6':'v6'};
+const STATUS_CHART_COLORS = {'Open':'#e53935','In Progress':'#1890ff','Reopened':'#fa8c16','Resolved':'#16a34a','Closed':'#16a34a','Fixed':'#16a34a','Done':'#16a34a'};
+
+let fieldMap = {
+  key:'Key', component:'Component_s', summary:'Summary', priority:'Priority',
+  created:'Created', status:'Status', tag:'Tag', mustResolve:'Must_Resolve',
+  affectProject:'Affect_Project', issueCategory:'Issue_Category', assignee:'Assignee',
+  labels:'Labels'
+};
+let jiraBaseUrl = 'https://jira/browse/';
+let activeData = []; // 排除已关闭状态后的活跃数据
+let currentTab = 1;
+let charts = {}; // 图表实例仓库
+
+// ============================================================
+// LOADING
+// ============================================================
+async function loadData() {
+  showLoading('正在加载数据...');
+  if (RAW_DATA && RAW_DATA.length) { hideLoading(); init(); return; }
+  if (typeof __DATA__ !== 'undefined' && __DATA__ && __DATA__.length) { RAW_DATA = __DATA__; hideLoading(); init(); return; }
+  var params = new URLSearchParams(location.search);
+  var token = params.get('token');
+  if (token) {
+    try {
+      var r = await fetch('/api/kanban-data/' + encodeURIComponent(token));
+      if (!r.ok) throw Error('HTTP '+r.status);
+      var d = await r.json();
+      RAW_DATA = d.issues || [];
+      hideLoading();
+      RAW_DATA.length ? init() : showEmpty('暂无数据');
+    } catch(e) { hideLoading(); showStatus('error','加载失败: '+e.message); showEmpty('数据加载失败'); }
+    return;
+  }
+  hideLoading();
+  showEmpty('暂无数据');
+}
+
+function showLoading(t) { document.getElementById('loadingText').textContent = t||'加载中...'; document.getElementById('loadingOverlay').classList.add('active'); }
+function hideLoading() { document.getElementById('loadingOverlay').classList.remove('active'); }
+function showEmpty(m) { document.querySelector('#emptyState h2').textContent = m||'暂无数据'; document.getElementById('emptyState').classList.add('active'); document.getElementById('dashboard').classList.remove('active'); }
+function showStatus(type, msg) { var e=document.getElementById('statusMsg'); e.className='status-msg '+type; e.textContent=msg; }
+
+// ============================================================
+// TAB SWITCHING
+// ============================================================
+function switchTab(n) {
+  currentTab = n;
+  document.querySelectorAll('.tab-item').forEach(function(t,i){ t.classList.toggle('active', i+1===n); });
+  document.querySelectorAll('.tab-content').forEach(function(t,i){ t.classList.toggle('active', i+1===n); });
+  // 切换后 resize 图表
+  Object.keys(charts).forEach(function(k){ if(charts[k]) try{ charts[k].resize(); }catch(e){} });
+}
+
+// ============================================================
+// FIELD MAPPING
+// ============================================================
+function toggleConfig() { document.getElementById('configPanel').classList.toggle('open'); }
+
+function applyFieldMapping() {
+  fieldMap.mustResolve  = document.getElementById('fldMustResolve').value;
+  fieldMap.tag          = document.getElementById('fldTag').value;
+  fieldMap.affectProject= document.getElementById('fldAffectProject').value;
+  fieldMap.issueCategory= document.getElementById('fldIssueCategory').value;
+  fieldMap.component    = document.getElementById('fldComponent').value;
+  fieldMap.assignee     = document.getElementById('fldAssignee').value;
+  jiraBaseUrl            = document.getElementById('fldJiraUrl').value;
+  if (jiraBaseUrl.slice(-1)!=='/') jiraBaseUrl+='/';
+  processData();
+  renderAll();
+  showStatus('success','字段映射已更新，所有图表和表格已刷新');
+}
+
+// ============================================================
+// DATA PROCESSING
+// ============================================================
+function f(issue, name) { var v = issue[name]; return v!==undefined && v!==null ? v : ''; }
+
+function processData() {
+  var exclude = ['Fixed','Closed','Done','已解决','关闭','Resolved'];
+  activeData = RAW_DATA.filter(function(i){ return exclude.indexOf(f(i, fieldMap.status)) === -1; });
+
+  activeData.forEach(function(i) {
+    var mr = f(i, fieldMap.mustResolve);
+    var pri = f(i, fieldMap.priority);
+    i._isMPBlock    = mr.indexOf('MP Block') !== -1;
+    i._isNotMPBlock = mr.indexOf('Not MP Block') !== -1;
+    i._isHighRisk   = i._isMPBlock || pri === 'Blocker';
+    i._categoryCN   = CATEGORY_MAP[f(i, fieldMap.issueCategory)] || '其他';
+
+    // 版本标记提取（仅 MP Block）
+    i._versionTag = '';
+    if (i._isMPBlock) {
+      var tag = f(i, fieldMap.tag);
+      if (!tag) { i._versionTag = '未标记'; }
+      else {
+        var found = false;
+        for (var vi=0; vi<VERSION_NAMES.length; vi++) {
+          if (tag.indexOf(VERSION_NAMES[vi]) !== -1) { i._versionTag = VERSION_NAMES[vi]; found=true; break; }
+        }
+        if (!found) i._versionTag = '无版本标记';
+      }
+    }
+
+    // 风险分类
+    if (i._isHighRisk) i._riskType = '高危';
+    else if (pri.indexOf('High')!==-1||pri.indexOf('Major')!==-1||pri.indexOf('高')!==-1) i._riskType = '中危';
+    else i._riskType = '低危';
+
+    // 状态标准化
+    var st = f(i, fieldMap.status).toLowerCase();
+    if (st.indexOf('open')!==-1||st.indexOf('新建')!==-1) i._statusNorm = 'Open';
+    else if (st.indexOf('progress')!==-1||st.indexOf('进行')!==-1) i._statusNorm = 'In Progress';
+    else if (st.indexOf('reopen')!==-1||st.indexOf('重开')!==-1) i._statusNorm = 'Reopened';
+    else if (st.indexOf('fixed')!==-1||st.indexOf('修复')!==-1) i._statusNorm = 'Fixed';
+    else if (st.indexOf('closed')!==-1||st.indexOf('关闭')!==-1) i._statusNorm = 'Closed';
+    else if (st.indexOf('resolved')!==-1||st.indexOf('解决')!==-1) i._statusNorm = 'Resolved';
+    else i._statusNorm = f(i, fieldMap.status);
+  });
+}
+
+// ============================================================
+// RENDER ALL
+// ============================================================
+function renderAll() {
+  if (!activeData.length) {
+    document.querySelectorAll('.tab-content').forEach(function(t){ t.innerHTML='<div class="empty-module" style="padding:60px;text-align:center;color:#94a3b8">暂无活跃问题数据</div>'; });
+    return;
+  }
+  renderTab1();
+  renderTab2();
+  renderTab3();
+  renderTab4();
+  renderTab5();
+  renderHeader();
+}
+
+// ============================================================
+// HEADER
+// ============================================================
+function renderHeader() {
+  var total = activeData.length;
+  var now = new Date();
+  var dateStr = now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate())+' '+pad(now.getHours())+':'+pad(now.getMinutes());
+  document.getElementById('headerSummary').textContent = '共 '+RAW_DATA.length+' 条记录 · 活跃 '+total+' 条 · 生成 '+dateStr;
+
+  var highC=0; activeData.forEach(function(i){ if(i._isHighRisk) highC++; });
+  var pct = total ? Math.round(highC/total*100) : 0;
+  var badge = document.getElementById('headerRiskBadge');
+  if (pct < 10) { badge.className='risk-badge-header low'; badge.textContent='🟢 低风险 '+pct+'%'; }
+  else if (pct < 30) { badge.className='risk-badge-header medium'; badge.textContent='🟠 中风险 '+pct+'%'; }
+  else { badge.className='risk-badge-header high'; badge.textContent='🔴 高风险 '+pct+'%'; }
+}
+function pad(n) { return n<10?'0'+n:''+n; }
+
+// ============================================================
+// TAB 1: 风险总览
+// ============================================================
+function renderTab1() {
+  var total = activeData.length;
+  var blockerC=0, criticalC=0, majorC=0, mpbC=0, v1C=0, highC=0, seenMpb={};
+
+  activeData.forEach(function(i){
+    var pri = f(i,fieldMap.priority);
+    if (pri==='Blocker'||pri==='Block') blockerC++;
+    else if (pri==='Critical') criticalC++;
+    else if (pri==='Major'||pri==='High') majorC++;
+    if (i._isHighRisk) highC++;
+    if (i._isMPBlock) { var k=f(i,fieldMap.key); if (!seenMpb[k]) { seenMpb[k]=true; mpbC++; if (i._versionTag==='用户版本1') v1C++; } }
+  });
+
+  var pct = total ? Math.round(highC/total*100) : 0;
+  var riskWord = pct>50 ? '极高风险' : (pct>30 ? '高风险' : (pct>15 ? '中风险' : '较低风险'));
+
+  // Risk Banner
+  document.getElementById('riskBanner').innerHTML =
+    '<div class="risk-banner"><div class="banner-title">🚨 整体风险等级：'+riskWord+'</div>'+
+    '<div class="banner-text">当前项目共有 <strong>'+total+'</strong> 个未闭环 Bug，其中 Blocker <strong>'+blockerC+'</strong> 个、Critical <strong>'+criticalC+'</strong> 个，'+
+    'MP Block <strong>'+mpbC+'</strong> 个，高优先级问题占比 <strong>'+pct+'%</strong>。'+(pct>30?'⚠️ 需紧急跟进！':'')+'</div></div>';
+
+  // Metric Cards (6)
+  document.getElementById('metricCards').innerHTML = [
+    {num:total, label:'Bug 总量', sub:'遗留未闭环', cls:'bg-blue', icon:'📋'},
+    {num:blockerC, label:'Blocker', sub:'最高优先级', cls:'bg-red', icon:'🔴'},
+    {num:criticalC, label:'Critical', sub:'高优先级', cls:'bg-orange', icon:'🟠'},
+    {num:majorC, label:'Major', sub:'中优先级', cls:'bg-yellow', icon:'🟡'},
+    {num:mpbC, label:'MP Block', sub:'必须解决', cls:'bg-darkred', icon:'🚨'},
+    {num:v1C, label:'用户版本1 必解', sub:'最高优先级', cls:'bg-darkorange', icon:'⚡'}
+  ].map(function(c){
+    return '<div class="metric-card '+c.cls+'"><div class="m-num">'+c.num+'</div><div class="m-label">'+c.label+'</div><div class="m-sub">'+c.sub+'</div><div class="m-icon">'+c.icon+'</div></div>';
+  }).join('');
+
+  // Charts Tab1
+  renderChart1a();
+  renderChart1b();
+  renderChart1c();
+  renderChart1d();
+  renderChart1e();
+}
+
+function renderChart1a() {
+  // Bug等级分布 Doughnut
+  var dist = {}; activeData.forEach(function(i){ var p=f(i,fieldMap.priority); if(p) dist[p]=(dist[p]||0)+1; });
+  var labels = Object.keys(dist).sort(function(a,b){ return (PRIORITY_ORDER[a]!==undefined?PRIORITY_ORDER[a]:99)-(PRIORITY_ORDER[b]!==undefined?PRIORITY_ORDER[b]:99); });
+  var vals = labels.map(function(l){ return dist[l]; });
+  var colors = labels.map(function(l){ return PRIORITY_COLORS[l]||'#90a4ae'; });
+  var ctx = document.getElementById('chart1a').getContext('2d');
+  if(charts.c1a) charts.c1a.destroy();
+  if(!labels.length) { charts.c1a = emptyChart(ctx,'暂无'); return; }
+  charts.c1a = new Chart(ctx, {
+    type:'doughnut',
+    data:{labels:labels, datasets:[{data:vals, backgroundColor:colors, borderWidth:2, borderColor:'#fff'}]},
+    options:{responsive:true, maintainAspectRatio:false, cutout:'55%',
+      plugins:{legend:{position:'bottom', labels:{color:'#64748b', padding:10, font:{size:11}}}}}
+  });
+}
+
+function renderChart1b() {
+  // 风险类型分布 Bar
+  var dist = {'高危':0,'中危':0,'低危':0};
+  activeData.forEach(function(i){ if(dist[i._riskType]!==undefined) dist[i._riskType]++; });
+  var ctx = document.getElementById('chart1b').getContext('2d');
+  if(charts.c1b) charts.c1b.destroy();
+  charts.c1b = new Chart(ctx, {
+    type:'bar',
+    data:{labels:['高危','中危','低危'], datasets:[{
+      data:[dist['高危'],dist['中危'],dist['低危']],
+      backgroundColor:['#e53935','#fa8c16','#16a34a'], borderRadius:4
+    }]},
+    options:{responsive:true, maintainAspectRatio:false,
+      scales:{x:{grid:{display:false}, ticks:{color:'#64748b',font:{size:11}}}, y:{beginAtZero:true, ticks:{color:'#64748b',stepSize:1,font:{size:11}}, grid:{color:'#f1f5f9'}}},
+      plugins:{legend:{display:false}}}
+  });
+}
+
+function renderChart1c() {
+  // Top15 模块风险热力图 - 横向堆叠柱状图
+  var mc = {};
+  activeData.forEach(function(i){
+    var comp = f(i,fieldMap.component);
+    var mods = comp ? comp.split(',').map(function(s){return s.trim();}).filter(Boolean) : ['未分类'];
+    mods.forEach(function(m){
+      if(!mc[m]) mc[m]={blocker:0, critical:0, major:0, other:0};
+      var pri = f(i,fieldMap.priority);
+      if(pri==='Blocker'||pri==='Block') mc[m].blocker++;
+      else if(pri==='Critical') mc[m].critical++;
+      else if(pri==='Major'||pri==='High') mc[m].major++;
+      else mc[m].other++;
+    });
+  });
+  var sorted = Object.keys(mc).sort(function(a,b){ return (mc[b].blocker*3+mc[b].critical*2+mc[b].major) - (mc[a].blocker*3+mc[a].critical*2+mc[a].major); }).slice(0,15);
+  var ctx = document.getElementById('chart1c').getContext('2d');
+  if(charts.c1c) charts.c1c.destroy();
+  if(!sorted.length) { charts.c1c = emptyChart(ctx,'暂无'); return; }
+  charts.c1c = new Chart(ctx, {
+    type:'bar', indexAxis:'y',
+    data:{labels:sorted, datasets:[
+      {label:'Blocker', data:sorted.map(function(m){return mc[m].blocker;}), backgroundColor:'#e53935', borderRadius:2},
+      {label:'Critical', data:sorted.map(function(m){return mc[m].critical;}), backgroundColor:'#fa8c16', borderRadius:2},
+      {label:'Major', data:sorted.map(function(m){return mc[m].major;}), backgroundColor:'#fdd835', borderRadius:2}
+    ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      scales:{x:{stacked:true, ticks:{color:'#64748b',font:{size:10},stepSize:1}, grid:{color:'#f1f5f9'}},
+              y:{stacked:true, ticks:{color:'#64748b',font:{size:10}}, grid:{display:false}}},
+      plugins:{legend:{position:'top', labels:{color:'#64748b',padding:8,font:{size:11}}}}}
+  });
+}
+
+function renderChart1d() {
+  // Bug状态分布 Doughnut
+  var dist = {};
+  activeData.forEach(function(i){
+    var st = i._statusNorm||f(i,fieldMap.status)||'其他';
+    dist[st] = (dist[st]||0)+1;
+  });
+  var labels = Object.keys(dist);
+  var vals = labels.map(function(l){ return dist[l]; });
+  var colors = labels.map(function(l){ return STATUS_CHART_COLORS[l]||'#94a3b8'; });
+  var ctx = document.getElementById('chart1d').getContext('2d');
+  if(charts.c1d) charts.c1d.destroy();
+  if(!labels.length) { charts.c1d = emptyChart(ctx,'暂无'); return; }
+  charts.c1d = new Chart(ctx, {
+    type:'doughnut',
+    data:{labels:labels.map(function(l,i){ return l+' ('+vals[i]+')';}), datasets:[{data:vals, backgroundColor:colors, borderWidth:2, borderColor:'#fff'}]},
+    options:{responsive:true, maintainAspectRatio:false, cutout:'55%',
+      plugins:{legend:{position:'bottom', labels:{color:'#64748b',padding:8,font:{size:11}}}}}
+  });
+}
+
+function renderChart1e() {
+  // 问题类别分布 Bar
+  var dist = {};
+  activeData.forEach(function(i){
+    var cat = i._categoryCN||'其他';
+    dist[cat] = (dist[cat]||0)+1;
+  });
+  var labels = Object.keys(dist).sort(function(a,b){return dist[b]-dist[a];});
+  var vals = labels.map(function(l){ return dist[l]; });
+  var ctx = document.getElementById('chart1e').getContext('2d');
+  if(charts.c1e) charts.c1e.destroy();
+  if(!labels.length) { charts.c1e = emptyChart(ctx,'暂无'); return; }
+  charts.c1e = new Chart(ctx, {
+    type:'bar',
+    data:{labels:labels, datasets:[{data:vals, backgroundColor:'#6366f1', borderRadius:4}]},
+    options:{responsive:true, maintainAspectRatio:false,
+      scales:{x:{grid:{display:false}, ticks:{color:'#64748b',font:{size:10}}}, y:{beginAtZero:true, ticks:{color:'#64748b',stepSize:1,font:{size:11}}, grid:{color:'#f1f5f9'}}},
+      plugins:{legend:{display:false}}}
+  });
+}
+
+// ============================================================
+// TAB 2: 分模块风险看板
+// ============================================================
+function renderTab2() {
+  // 按模块聚合风险得分
+  var modData = {};
+  activeData.forEach(function(i){
+    var comp = f(i,fieldMap.component);
+    var mods = comp ? comp.split(',').map(function(s){return s.trim();}).filter(Boolean) : ['未分类'];
+    mods.forEach(function(m){
+      if(!modData[m]) modData[m]={total:0, blocker:0, critical:0, major:0, other:0, mpb:0, mustV:0, bugs:[]};
+      modData[m].total++;
+      var pri = f(i,fieldMap.priority);
+      if(pri==='Blocker'||pri==='Block') modData[m].blocker++;
+      else if(pri==='Critical') modData[m].critical++;
+      else if(pri==='Major'||pri==='High') modData[m].major++;
+      else modData[m].other++;
+      if(i._isMPBlock) modData[m].mpb++;
+      if(i._versionTag && i._versionTag!=='未标记' && i._versionTag!=='无版本标记') modData[m].mustV++;
+      if(modData[m].bugs.length < 2) modData[m].bugs.push(i);
+    });
+  });
+
+  // 计算风险得分并按得分降序排列
+  var sorted = Object.keys(modData).map(function(m){
+    var d=modData[m];
+    d.score = d.blocker*3 + d.critical*2 + d.major;
+    d.name = m;
+    return d;
+  }).sort(function(a,b){ return b.score - a.score; }).slice(0,25);
+
+  // 风险类型推断（基于模块名关键词）
+  function guessRiskType(name) {
+    var n = name.toLowerCase();
+    if(n.indexOf('hardware')!==-1||n.indexOf('hw')!==-1||n.indexOf('硬件')!==-1||n.indexOf('pcb')!==-1||n.indexOf('电源')!==-1) return '硬件';
+    if(n.indexOf('software')!==-1||n.indexOf('sw')!==-1||n.indexOf('软件')!==-1||n.indexOf('driver')!==-1||n.indexOf('驱动')!==-1) return '软件';
+    if(n.indexOf('交互')!==-1||n.indexOf('interface')!==-1||n.indexOf('通信')!==-1) return '软硬件交互';
+    return '软件';
+  }
+
+  var body = document.getElementById('moduleRiskBody');
+  if(!sorted.length){ body.innerHTML='<tr><td colspan="10" style="text-align:center;padding:40px;color:#94a3b8">暂无模块数据</td></tr>'; return; }
+
+  body.innerHTML = sorted.map(function(d){
+    var riskType = guessRiskType(d.name);
+    var riskLevel = d.score >= 10 ? '高风险' : (d.score >= 5 ? '中风险' : '低风险');
+    var rowClass = d.score >= 10 ? 'row-high' : (d.score >= 5 ? 'row-medium' : 'row-normal');
+    var riskTagClass = d.score >= 10 ? 'high' : (d.score >= 5 ? 'medium' : 'low');
+    var bugLinks = d.bugs.map(function(b){
+      var key = f(b,fieldMap.key);
+      var sum = f(b,fieldMap.summary);
+      return '<a href="'+jiraBaseUrl+key+'" target="_blank" title="'+esc(sum)+'">'+esc(key)+'</a>';
+    }).join(' ');
+    return '<tr class="'+rowClass+'"><td><strong>'+esc(d.name)+'</strong></td>'+
+      '<td>'+riskType+'</td>'+
+      '<td><span class="risk-tag '+riskTagClass+'">'+riskLevel+'</span></td>'+
+      '<td class="risk-score">'+d.score+'</td>'+
+      '<td>'+d.blocker+'</td><td>'+d.critical+'</td><td>'+d.major+'</td>'+
+      '<td>'+(d.mpb?'<span class="tag-mpb">MPB '+d.mpb+'</span>':'—')+'</td>'+
+      '<td>'+(d.mustV?'<span class="tag-must">必解 '+d.mustV+'</span>':'—')+'</td>'+
+      '<td style="font-size:12px">'+bugLinks+'</td></tr>';
+  }).join('');
+}
+
+// ============================================================
+// TAB 3: 重点问题跟踪
+// ============================================================
+var filter3State = { priority:'', risk:'', status:'', onlyMPB:false, onlyMust:false, search:'' };
+
+function renderTab3() {
+  // MP Block 置顶卡片
+  var mpbIssues = [];
+  var seenMpb = {};
+  activeData.forEach(function(i){
+    if(i._isMPBlock){ var k=f(i,fieldMap.key); if(!seenMpb[k]){ seenMpb[k]=true; mpbIssues.push(i); } }
+  });
+  var mpbContainer = document.getElementById('mpbCards');
+  if(mpbIssues.length){
+    mpbContainer.innerHTML = '<div style="font-size:13px;font-weight:600;color:#e53935;margin-bottom:8px">🔴 MP Block 必解问题 ('+mpbIssues.length+')</div>'+
+      '<div class="mpb-card-row">'+mpbIssues.slice(0,12).map(function(i){
+        var key=f(i,fieldMap.key), comp=f(i,fieldMap.component), sum=f(i,fieldMap.summary);
+        return '<div class="mpb-card"><div class="mpb-key"><a href="'+jiraBaseUrl+key+'" target="_blank">'+esc(key)+'</a></div>'+
+          '<div class="mpb-comp">'+esc(comp||'—')+'</div><div class="mpb-sum" title="'+esc(sum)+'">'+esc(sum.length>60?sum.slice(0,60)+'…':sum)+'</div></div>';
+      }).join('')+'</div>';
+  } else {
+    mpbContainer.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:8px 0">✅ 暂无 MP Block 问题</div>';
+  }
+
+  // 收集筛选选项
+  gatherFilter3Options();
+  applyFilter3();
+}
+
+function gatherFilter3Options() {
+  var pri={}, risk={}, stat={};
+  activeData.forEach(function(i){
+    var p=f(i,fieldMap.priority); if(p) pri[p]=1;
+    if(i._riskType) risk[i._riskType]=1;
+    var s=i._statusNorm||f(i,fieldMap.status)||'其他'; stat[s]=1;
+  });
+  setOptions('f3Priority', Object.keys(pri).sort(function(a,b){ return (PRIORITY_ORDER[a]!==undefined?PRIORITY_ORDER[a]:99)-(PRIORITY_ORDER[b]!==undefined?PRIORITY_ORDER[b]:99); }));
+  setOptions('f3Risk', Object.keys(risk).sort());
+  setOptions('f3Status', Object.keys(stat).sort());
+}
+
+function setOptions(id, items) {
+  var sel=document.getElementById(id), val=sel.value;
+  sel.innerHTML='<option value="">全部</option>';
+  items.forEach(function(it){ var o=document.createElement('option'); o.value=it; o.textContent=it; sel.appendChild(o); });
+  sel.value=val;
+}
+
+function getFilter3Data() {
+  var s = filter3State;
+  return activeData.filter(function(i){
+    if(s.priority && f(i,fieldMap.priority)!==s.priority) return false;
+    if(s.risk && i._riskType!==s.risk) return false;
+    if(s.status) { var st=i._statusNorm||f(i,fieldMap.status)||'其他'; if(st!==s.status) return false; }
+    if(s.onlyMPB && !i._isMPBlock) return false;
+    if(s.onlyMust) { var vt=i._versionTag||''; if(vt===''||vt==='未标记'||vt==='无版本标记') return false; }
+    if(s.search) {
+      var q=s.search.toLowerCase();
+      var key=f(i,fieldMap.key).toLowerCase();
+      var sum=f(i,fieldMap.summary).toLowerCase();
+      if(key.indexOf(q)===-1 && sum.indexOf(q)===-1) return false;
+    }
+    return true;
+  });
+}
+
+function applyFilter3() {
+  filter3State.priority = document.getElementById('f3Priority').value;
+  filter3State.risk     = document.getElementById('f3Risk').value;
+  filter3State.status   = document.getElementById('f3Status').value;
+  filter3State.onlyMPB  = document.getElementById('f3OnlyMPB').checked;
+  filter3State.onlyMust = document.getElementById('f3OnlyMust').checked;
+  filter3State.search   = document.getElementById('f3Search').value;
+
+  var fd = getFilter3Data();
+  document.getElementById('f3Count').textContent = '筛选结果：'+fd.length+'/'+activeData.length+' 条';
+
+  var body = document.getElementById('trackBody3');
+  if(!fd.length){ body.innerHTML='<tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8">暂无匹配数据</td></tr>'; return; }
+
+  body.innerHTML = fd.map(function(i){
+    var key=f(i,fieldMap.key), comp=f(i,fieldMap.component), sum=f(i,fieldMap.summary), ds=sum.length>100?sum.slice(0,100)+'…':sum;
+    var pri=f(i,fieldMap.priority);
+    var isBlocker = pri==='Blocker'||pri==='Block';
+    var rowClass = isBlocker ? 'row-blinker' : 'row-normal';
+    var mr=f(i,fieldMap.mustResolve), stat=f(i,fieldMap.status), assign=f(i,fieldMap.assignee);
+    var vt=i._versionTag;
+    var tags=[];
+    if(i._isMPBlock) tags.push('<span class="tag-mpb">MPB</span>');
+    if(vt && vt!=='未标记' && vt!=='无版本标记') tags.push('<span class="tag-must">'+esc(vt)+'</span>');
+    var statClass = 'default';
+    var sn = i._statusNorm||'';
+    if(sn==='Open') statClass='open';
+    else if(sn==='In Progress') statClass='in-progress';
+    else if(sn==='Reopened') statClass='reopened';
+    else if(sn==='Fixed'||sn==='Closed'||sn==='Resolved'||sn==='Done') statClass='fixed';
+    return '<tr class="'+rowClass+'"><td class="key-cell"><a href="'+jiraBaseUrl+key+'" target="_blank">'+esc(key)+'</a></td>'+
+      '<td class="cell-comp" title="'+esc(comp)+'">'+esc(comp||'—')+'</td>'+
+      '<td><span class="pri-badge" style="background:'+PRIORITY_COLORS[pri]+'22;color:'+(PRIORITY_COLORS[pri]||'#64748b')+';font-weight:700;font-size:11px;padding:1px 8px;border-radius:4px">'+(pri==='Blocker'?'🔴':pri==='Critical'?'🟠':pri==='Major'?'🟡':'')+' '+esc(pri)+'</span></td>'+
+      '<td><span class="risk-tag '+i._riskType+'">'+i._riskType+'</span></td>'+
+      '<td class="cell-summary" title="'+esc(sum)+'">'+esc(ds)+'</td>'+
+      '<td>'+tags.join(' ')+'</td>'+
+      '<td><span class="stat-badge '+statClass+'">'+esc(stat)+'</span></td>'+
+      '<td style="font-size:12px;color:#64748b">'+esc(assign||'—')+'</td></tr>';
+  }).join('');
+}
+
+function clearFilter3() {
+  document.getElementById('f3Priority').value='';
+  document.getElementById('f3Risk').value='';
+  document.getElementById('f3Status').value='';
+  document.getElementById('f3OnlyMPB').checked=false;
+  document.getElementById('f3OnlyMust').checked=false;
+  document.getElementById('f3Search').value='';
+  applyFilter3();
+}
+
+// ============================================================
+// TAB 4: 风险趋势看板
+// ============================================================
+function renderTab4() {
+  // 按周聚合
+  var weekMap = {};
+  RAW_DATA.forEach(function(i){
+    var created = f(i, fieldMap.created);
+    if (!created) return;
+    // 尝试解析各种日期格式
+    var d = parseDate(created);
+    if (!d) return;
+    var weekKey = getWeekKey(d);
+    if (!weekMap[weekKey]) weekMap[weekKey]={total:0, blocker:0, critical:0, fixed:0};
+    weekMap[weekKey].total++;
+    var pri = f(i, fieldMap.priority);
+    if(pri==='Blocker'||pri==='Block') weekMap[weekKey].blocker++;
+    else if(pri==='Critical') weekMap[weekKey].critical++;
+    var st = f(i, fieldMap.status).toLowerCase();
+    if(st.indexOf('fixed')!==-1||st.indexOf('closed')!==-1||st.indexOf('resolved')!==-1||st.indexOf('done')!==-1||st.indexOf('已解决')!==-1||st.indexOf('关闭')!==-1) weekMap[weekKey].fixed++;
+  });
+
+  var weeks = Object.keys(weekMap).sort();
+  var totalArr = weeks.map(function(w){ return weekMap[w].total; });
+  var blockerArr = weeks.map(function(w){ return weekMap[w].blocker; });
+  var criticalArr = weeks.map(function(w){ return weekMap[w].critical; });
+  var fixedArr = weeks.map(function(w){ return weekMap[w].fixed; });
+  var weekLabels = weeks.map(function(w){ var p=w.split('-W'); return p[1]||w; });
+
+  // 4a: Bug提交趋势线
+  var ctxA = document.getElementById('chart4a').getContext('2d');
+  if(charts.c4a) charts.c4a.destroy();
+  if(!weeks.length) { charts.c4a = emptyChart(ctxA,'暂无'); return; }
+  charts.c4a = new Chart(ctxA, {
+    type:'line',
+    data:{labels:weekLabels, datasets:[{
+      label:'总提交', data:totalArr, borderColor:'#6366f1', backgroundColor:'rgba(99,102,241,0.1)', fill:true, tension:0.3, pointRadius:4, pointBackgroundColor:'#6366f1'
+    }]},
+    options:{responsive:true, maintainAspectRatio:false,
+      scales:{x:{ticks:{color:'#64748b',font:{size:11}}, grid:{color:'#f1f5f9'}}, y:{beginAtZero:true, ticks:{color:'#64748b',stepSize:1,font:{size:11}}, grid:{color:'#f1f5f9'}}},
+      plugins:{legend:{position:'top', labels:{color:'#64748b',font:{size:11}}}}}
+  });
+
+  // 4b: 各周 Blocker/Critical 堆叠柱状图
+  var ctxB = document.getElementById('chart4b').getContext('2d');
+  if(charts.c4b) charts.c4b.destroy();
+  charts.c4b = new Chart(ctxB, {
+    type:'bar',
+    data:{labels:weekLabels, datasets:[
+      {label:'Blocker', data:blockerArr, backgroundColor:'#e53935', borderRadius:3},
+      {label:'Critical', data:criticalArr, backgroundColor:'#fa8c16', borderRadius:3}
+    ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      scales:{x:{stacked:true, ticks:{color:'#64748b',font:{size:11}}, grid:{display:false}},
+              y:{stacked:true, beginAtZero:true, ticks:{color:'#64748b',stepSize:1,font:{size:11}}, grid:{color:'#f1f5f9'}}},
+      plugins:{legend:{position:'top', labels:{color:'#64748b',font:{size:11}}}}}
+  });
+
+  // 4c: 已修复 vs 总提交 分组柱状图
+  var ctxC = document.getElementById('chart4c').getContext('2d');
+  if(charts.c4c) charts.c4c.destroy();
+  charts.c4c = new Chart(ctxC, {
+    type:'bar',
+    data:{labels:weekLabels, datasets:[
+      {label:'总提交', data:totalArr, backgroundColor:'#6366f1', borderRadius:3},
+      {label:'已修复', data:fixedArr, backgroundColor:'#16a34a', borderRadius:3}
+    ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      scales:{x:{ticks:{color:'#64748b',font:{size:11}}, grid:{display:false}},
+              y:{beginAtZero:true, ticks:{color:'#64748b',stepSize:1,font:{size:11}}, grid:{color:'#f1f5f9'}}},
+      plugins:{legend:{position:'top', labels:{color:'#64748b',font:{size:11}}}}}
+  });
+}
+
+function parseDate(str) {
+  if(!str) return null;
+  // 尝试各种格式: ISO, yyyy-MM-dd, yyyy/MM/dd, MM/dd/yyyy
+  var d = new Date(str);
+  if(!isNaN(d)) return d;
+  // 尝试 yyyy-MM-dd
+  var m = str.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if(m) return new Date(+m[1], +m[2]-1, +m[3]);
+  return null;
+}
+
+function getWeekKey(d) {
+  // 获取 ISO 周号
+  var year = d.getFullYear();
+  var jan1 = new Date(year,0,1);
+  var days = Math.round((d - jan1) / 86400000);
+  var week = Math.ceil((days + jan1.getDay() + 1) / 7);
+  return year+'-W'+pad(week);
+}
+
+// ============================================================
+// TAB 5: 结论与建议
+// ============================================================
+function renderTab5() {
+  var total = activeData.length;
+  var rawTotal = RAW_DATA.length;
+  var blockerC=0, criticalC=0, majorC=0, mpbC=0, highC=0, noTag=0, seenMpb={};
+  var blockedModules = {};
+  var hwMods = {}, swMods = {}, intMods = {};
+
+  activeData.forEach(function(i){
+    var pri = f(i,fieldMap.priority);
+    if(pri==='Blocker'||pri==='Block') blockerC++;
+    else if(pri==='Critical') criticalC++;
+    else if(pri==='Major'||pri==='High') majorC++;
+    if(i._isHighRisk) highC++;
+    if(i._isMPBlock){
+      var k=f(i,fieldMap.key);
+      if(!seenMpb[k]){ seenMpb[k]=true; mpbC++; var vt=i._versionTag; if(!vt||vt==='未标记'||vt==='无版本标记') noTag++; }
+    }
+    if(i._isHighRisk){
+      var comp = f(i,fieldMap.component);
+      var mods = comp ? comp.split(',').map(function(s){return s.trim();}).filter(Boolean) : ['未分类'];
+      mods.forEach(function(m){
+        blockedModules[m]=(blockedModules[m]||0)+1;
+        var n = m.toLowerCase();
+        if(n.indexOf('hardware')!==-1||n.indexOf('hw')!==-1||n.indexOf('硬件')!==-1||n.indexOf('pcb')!==-1) hwMods[m]=1;
+        else if(n.indexOf('交互')!==-1||n.indexOf('interface')!==-1) intMods[m]=1;
+        else swMods[m]=1;
+      });
+    }
+  });
+
+  var highPct = total ? Math.round(highC/total*100) : 0;
+  var riskWord = highPct>50 ? '极高风险 — 强烈建议紧急跟进' : (highPct>30 ? '高风险 — 建议尽快处理' : (highPct>15 ? '中风险 — 需持续关注' : '较低风险 — 维持当前节奏'));
+  var topMods = Object.keys(blockedModules).sort(function(a,b){ return blockedModules[b]-blockedModules[a]; }).slice(0,3);
+  var noTagPct = mpbC ? Math.round(noTag/mpbC*100) : 0;
+  var resolvedC = rawTotal - total;
+  var resolvePct = rawTotal ? Math.round(resolvedC/rawTotal*100) : 0;
+
+  // 结论横幅
+  document.getElementById('conclusionBanner').innerHTML =
+    '<div class="conclusion-banner"><div class="cb-title">🚨 整体风险判断：'+riskWord+'</div>'+
+    '<div class="cb-text">当前 <strong>'+total+'</strong> 个 Bug 中，<strong>'+highC+'</strong> 个高优先级问题（占 '+highPct+'%）尚未修复。'+
+    '其中 Blocker '+blockerC+' 个、Critical '+criticalC+' 个、MP Block '+mpbC+' 个。'+
+    (highPct>30 ? '⚠️ 需立即协调资源处理！' : '')+'</div></div>';
+
+  // TODO: 硬件/软件/交互分类需要更智能的方式，目前基于模块名关键词
+  var hwCount = Object.keys(hwMods).length;
+  var swCount = Object.keys(swMods).length;
+  var intCount = Object.keys(intMods).length;
+
+  document.getElementById('conclusionGrid').innerHTML =
+    '<div class="conclusion-card"><h4>🔴 立即行动</h4><ul>'+
+      '<li>MP Block <span class="highlight">'+mpbC+'</span> 个 — 需紧急修复，建议按版本优先级排期</li>'+
+      '<li>Blocker <span class="highlight">'+blockerC+'</span> 个 — 阻塞性缺陷，需立即分配责任人</li>'+
+      '<li>高风险模块 '+(topMods.length?'<span class="highlight">'+topMods.join('、')+'</span>':'暂无')+' — 建议集中资源攻坚</li>'+
+    '</ul></div>'+
+    '<div class="conclusion-card"><h4>🟠 近期推进</h4><ul>'+
+      '<li>Critical <span class="warn">'+criticalC+'</span> 个 — 应在下个迭代前完成修复</li>'+
+      '<li>Major <span class="warn">'+majorC+'</span> 个 — 纳入迭代计划逐步解决</li>'+
+      '<li>重点模块：'+(topMods.length?topMods.map(function(m){ return m+'('+blockedModules[m]+')'; }).join('、'):'无')+'</li>'+
+    '</ul></div>'+
+    '<div class="conclusion-card"><h4>🔗 跨团队协同</h4><ul>'+
+      (hwCount?'<li>硬件团队涉及 <span class="info">'+hwCount+'</span> 个模块</li>':'<li>硬件团队涉及模块较少</li>')+
+      (swCount?'<li>软件团队涉及 <span class="info">'+swCount+'</span> 个模块</li>':'<li>软件团队涉及模块较少</li>')+
+      (intCount?'<li>软硬件交互模块 <span class="warn">'+intCount+'</span> 个 — 需重点协调</li>':'<li>软硬件交互模块 — 暂无数据</li>')+
+    '</ul></div>'+
+    '<div class="conclusion-card"><h4>📊 数据质量</h4><ul>'+
+      (noTagPct>0?'<li>版本标记缺失比例：<span class="warn">'+noTagPct+'%</span>（'+noTag+'/'+mpbC+'）</li>':'<li>✅ 版本标记完整率良好</li>')+
+      '<li>共采集 <span class="info">'+rawTotal+'</span> 条原始数据，活跃 <span class="info">'+total+'</span> 条</li>'+
+      '<li>建议补录字段：版本标记（Tag）、必解标记（Must_Resolve）</li>'+
+    '</ul></div>';
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function esc(s) { if(typeof s!=='string') return String(s||''); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function emptyChart(ctx, msg) {
+  return new Chart(ctx, {
+    type:'doughnut',
+    data:{labels:[msg||'暂无数据'], datasets:[{data:[1], backgroundColor:['#e2e8f0']}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}}
+  });
+}
+
+// ============================================================
+// INIT
+// ============================================================
+function init() {
+  if(!RAW_DATA||!RAW_DATA.length){ showEmpty('暂无数据'); return; }
+  document.getElementById('emptyState').classList.remove('active');
+  document.getElementById('dashboard').classList.add('active');
+
+  // Fill config inputs
+  var cfgMap = {
+    fldMustResolve:'mustResolve', fldTag:'tag', fldAffectProject:'affectProject',
+    fldIssueCategory:'issueCategory', fldComponent:'component', fldAssignee:'assignee'
+  };
+  Object.keys(cfgMap).forEach(function(id){ document.getElementById(id).value = fieldMap[cfgMap[id]]; });
+  document.getElementById('fldJiraUrl').value = jiraBaseUrl;
+
+  processData();
+  renderAll();
+  switchTab(1);
+}
+
+document.addEventListener('DOMContentLoaded', loadData);
+</script>
+</body>
+</html>

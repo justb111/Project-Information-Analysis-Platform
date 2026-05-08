@@ -4,11 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智能体分析平台</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=5.0">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
-    <!-- 登录界面 -->
     <div id="loginContainer" class="login-container">
         <div class="login-card">
             <h2>智能体分析平台</h2>
@@ -19,27 +21,102 @@
         </div>
     </div>
 
-    <!-- 主应用界面（登录后显示） -->
     <div id="appContainer" class="app" style="display: none;">
-        <!-- 左侧导航栏 -->
-        <nav class="sidebar">
-            <div class="logo">🤖 项目信息助手</div>
-            <button class="nav-btn" data-tab="home">🏠 首页</button>
-            <button class="nav-btn" data-tab="leak">📋 项目信息查询</button>
-            <button class="nav-btn" data-tab="risk">⚠️ 项目风险分析</button>
-            <button class="nav-btn" data-tab="project">📊 项目管理助手</button>
-        </nav>
+        <!-- 左侧导航区 -->
+        <aside class="sidebar">
+            <div class="logo-section">
+                <div class="logo">[LOGO]</div>
+                <div class="logo-title">项目信息助手</div>
+            </div>
+            
+            <nav class="nav-section">
+                <div class="nav-label">Navigation</div>
+                <button class="nav-btn active" data-tab="home">🏠 首页</button>
+                <button class="nav-btn" data-tab="risk">⚠️ 项目风险分析</button>
+                <button class="nav-btn" data-tab="leak">📋 项目信息查询</button>
+                <button class="nav-btn" data-tab="project">📊 项目管理助手</button>
+                <button class="nav-btn" data-tab="progress">📈 项目进度风险看板</button>
+                <button class="nav-btn" data-tab="workforce">👥 人力洞察看板</button>
+                <button class="nav-btn" data-tab="delivery">🚚 交付路线图看板</button>
+                <button class="nav-btn" data-tab="knowledge">📚 知识库管理</button>
+            </nav>
+            
+            <div class="level-badge-section">
+                <button class="level-badge">Level Badge</button>
+            </div>
+            
+            <div class="issues-count">
+                <span class="issues-label">Issues:</span>
+                <span class="issues-number">0</span>
+            </div>
+            
+            <!-- Jira凭据配置区域 -->
+            <div class="jira-credentials-panel">
+                <div class="credentials-title">Jira凭据配置</div>
+                <input type="text" id="jiraUsername" placeholder="Jira用户名" class="credentials-input">
+                <input type="password" id="jiraPassword" placeholder="Jira密码" class="credentials-input">
+                <input type="text" id="jiraDepartment" placeholder="归属部门（示例：深圳传音控股-传音控股-交付测试部-DT_交付测试部-DT_交付在研项目部）" class="credentials-input" title="归属部门示例：深圳传音控股-传音控股-交付测试部-DT_交付测试部-DT_交付在研项目部">
+                <div id="departmentHint" class="department-hint">
+                    <div class="hint-content">完整示例：深圳传音控股-传音控股-交付测试部-DT_交付测试部-DT_交付在研项目部</div>
+                </div>
+                <div class="credentials-actions">
+                    <button id="saveCredentials" class="credentials-btn">保存凭据</button>
+                    <label class="remember-checkbox">
+                        <input type="checkbox" id="rememberCredentials"> 记住凭据
+                    </label>
+                </div>
+                <div id="credentialsStatus" class="credentials-status">未配置凭据</div>
+                <div class="credentials-info">
+                    <small>您的Jira凭据仅存储在本地，用于访问Jira数据</small>
+                </div>
+            </div>
+            
+	        </aside>
 
-        <!-- 右侧内容区 -->
-        <main class="content">
-            <!-- 左侧项目风险分析区 -->
-            <div class="content-left">
-                <!-- 首页面板 -->
-                <div id="homePanel" class="panel">
-                    <h2>项目信息助手分析平台</h2>
-                    <div class="welcome-card">
-                        <h3>欢迎使用项目信息助手</h3>
-                        <p>该助手可以提供以下功能：</p>
+        <!-- 中间交互区（对话流） -->
+        <main class="chat-area">
+            <header class="chat-header">
+                <div class="chat-title">💬 AI 分析助手</div>
+            </header>
+            
+            <div id="chatMessages" class="chat-messages">
+                <div class="message ai">
+                    <div class="avatar">🤖</div>
+                    <div class="message-content">
+                        <p>您好！我是项目信息助手，请问有什么可以帮助您的？</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="thinkingProcess" class="thinking-process">
+                <div class="thinking-header">
+                    <span class="thinking-toggle" id="thinkingToggle" onclick="toggleThinking()">▲ 思考过程</span>
+                </div>
+                <div class="thinking-content" id="thinkingContent" style="display: none;"></div>
+            </div>
+            
+            <div class="chat-input-area">
+                <textarea id="aiInput" placeholder="输入分析请求..." class="ai-input" rows="1"></textarea>
+                <button id="sendBtn" class="send-btn">发送</button>
+            </div>
+        </main>
+
+        <!-- 右侧数据面板 -->
+        <aside class="data-panel">
+            <header class="panel-header">
+                <div class="panel-title" id="panelTitle">数据面板</div>
+                <div class="panel-actions">
+                    <button class="action-btn">刷新</button>
+                    <button class="action-btn">导出</button>
+                </div>
+            </header>
+            
+            <div class="panel-content">
+                <!-- 首页数据 -->
+                <div id="homePanel" class="tab-content active">
+                    <div class="welcome-section">
+                        <h3>项目信息助手分析平台</h3>
+                        <p>欢迎使用项目信息助手，该助手可以提供以下功能：</p>
                         <ul>
                             <li>⚠️ 项目风险分析（针对现有项目对研发测试部、交付测试部任何时间段提交的bug进行分析，为用户提供建议，提前暴露项目风险）</li>
                             <li>📋 项目信息查询（对在研项目的PD、SPD、关键器件选型表、三方预装表进行精准查询，提升用户的测试效率，提高测试质量）</li>
@@ -48,175 +125,993 @@
                         <p>请从左侧导航栏选择相应助手开始使用</p>
                         <p>请从右侧AI分析助手询问相关问题，可在对应导航栏进行信息查看</p>
                     </div>
-                    <div id="projectSummary" class="panel">
-                        <h3>项目概览</h3>
-                        <p>加载项目数据中...</p>
-                    </div>
                 </div>
                 
-                <!-- 项目信息查询面板 -->
-                <div id="leakPanel" class="panel">
-                    <h2>项目信息查询</h2>
+                <!-- 项目风险分析数据 -->
+                <div id="riskPanel" class="tab-content">
+                    <!-- 风险分析摘要（最上层） -->
+                    <div class="analysis-summary" style="order: 1; margin-bottom: 20px; max-height: 200px; overflow-y: auto;">
+                        <h3>风险分析摘要</h3>
+                        <div id="riskAnalysisSummary">
+                            <p>待生成数据分析中</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Risk Summary（风险分析摘要下方） -->
+                    <div class="risk-summary-panel" style="order: 2; margin-bottom: 20px;">
+                        <h3>风险等级分布</h3>
+                        <div class="risk-summary-items">
+                            <div class="risk-summary-item high">🔴 高风险: <span id="highRiskCount">0</span></div>
+                            <div class="risk-summary-item medium">🟡 中风险: <span id="mediumRiskCount">0</span></div>
+                            <div class="risk-summary-item low">🟢 低风险: <span id="lowRiskCount">0</span></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Label/Tag分布区域 -->
+                    <div class="label-tag-section" style="order: 3; margin-bottom: 20px; max-height: 150px; overflow-y: auto;">
+                        <h3>Label/Tag分布</h3>
+                        <div id="labelTagDistribution" class="label-tag-container">
+                            <p>正在分析标签分布...</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 整机项目风险区域 -->
+                    <div class="project-risk-section" style="order: 4; margin-bottom: 20px; max-height: 150px; overflow-y: auto;">
+                        <h3>整机项目风险（X系列）</h3>
+                        <div id="wholeMachineRisks" class="risk-keys-container">
+                            <p>暂无整机项目风险</p>
+                        </div>
+                    </div>
+                    
+                    <!-- tOS风险区域 -->
+                    <div class="project-risk-section" style="order: 5; margin-bottom: 20px; max-height: 150px; overflow-y: auto;">
+                        <h3>tOS系统风险</h3>
+                        <div id="tosRisks" class="risk-keys-container">
+                            <p>暂无tOS系统风险</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 共性问题识别 -->
+                    <div class="common-issues" style="order: 6; margin-bottom: 20px; max-height: 150px; overflow-y: auto;">
+                        <h3>共性问题识别</h3>
+                        <div id="commonIssuesContainer">
+                            <p>正在分析共性问题...</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 趋势图表 -->
+                    <div class="trend-charts-panel" style="order: 7; margin-bottom: 20px;">
+                        <div class="trend-chart-item">
+                            <h3>Bug提交走势图（近15天）</h3>
+                            <canvas id="submissionTrendChart" width="200" height="120"></canvas>
+                        </div>
+                        <div class="trend-chart-item">
+                            <h3>Bug验证走势图（近15天）</h3>
+                            <canvas id="verificationTrendChart" width="200" height="120"></canvas>
+                        </div>
+                    </div>
+                    
+                    <!-- 关键指标卡片 -->
+                    <div class="feature-cards-panel" style="order: 8; margin-bottom: 20px;">
+                        <div class="feature-card-small">
+                            <div class="card-icon">📊</div>
+                            <div class="card-title">总问题数</div>
+                            <div class="card-value" id="totalIssuesCount">0</div>
+                        </div>
+                        <div class="feature-card-small">
+                            <div class="card-icon">�</div>
+                            <div class="card-title">阻塞问题</div>
+                            <div class="card-value" id="blockingIssuesCount">0</div>
+                        </div>
+                        <div class="feature-card-small">
+                            <div class="card-icon">📈</div>
+                            <div class="card-title">解决率</div>
+                            <div class="card-value" id="resolutionRate">0%</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 图表区域 -->
+                    <div class="charts-panel" style="order: 9;">
+                        <div class="chart-item">
+                            <h4>优先级分布（阻塞/严重问题）</h4>
+                            <canvas id="priorityChart" width="180" height="120"></canvas>
+                        </div>
+                        <div class="chart-item">
+                            <h4>状态分布（阻塞/严重问题）</h4>
+                            <canvas id="statusChart" width="180" height="120"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 风险看板容器 -->
+                <div id="riskKanbanContainer" class="kanban-container" style="display: none;">
+                    <div class="kanban-header">
+                        <div class="kanban-header-title">
+                            <span class="kanban-icon">📋</span>
+                            <h3>风险看板</h3>
+                            <span class="kanban-project-name" id="kanbanProjectName"></span>
+                        </div>
+                        <div class="kanban-header-actions">
+                            <span class="kanban-summary" id="kanbanSummary"></span>
+                            <button class="kanban-close-btn" id="closeKanbanBtn" onclick="hideRiskKanban()">✕ 关闭看板</button>
+                        </div>
+                    </div>
+                    <div class="kanban-board" id="kanbanBoard"></div>
+                </div>
+
+                <!-- 项目信息查询数据 -->
+                <div id="leakPanel" class="tab-content">
+                    <h3>项目信息查询</h3>
                     <div class="search-section">
                         <input type="text" id="leakSearch" placeholder="搜索项目...">
                         <button id="leakSearchBtn">搜索</button>
                     </div>
                     <div id="leakGroups" class="groups-container"></div>
                 </div>
-
-                <!-- 漏测详情面板 -->
-                <div id="leakDetailPanel" class="panel">
-                    <h2>漏测/不合规详情</h2>
-                    <button id="leakBackBtn">返回</button>
-                    <div id="leakDetailContent"></div>
-                </div>
-
-                <!-- 项目风险分析面板 -->
-                <div id="riskPanel" class="panel">
-                    <h2>项目风险分析</h2>
-                    <!-- 搜索栏 -->
-                    <div class="search-section" style="width: 100%; margin-bottom: 20px;">
-                        <input type="text" id="projectSearch" placeholder="搜索项目..." style="width: 80%;">
-                        <button id="searchBtn">搜索</button>
-                    </div>
-                    <!-- 主体内容区 -->
-                    <div class="risk-main-content" style="display: flex; flex-direction: column; gap: 20px;">
-                        <!-- 项目列表和分析摘要区 -->
-                        <div style="display: flex; gap: 20px;">
-                            <!-- 左侧项目列表区 -->
-                            <div class="risk-project-list" style="flex: 1; min-width: 300px;">
-                                <h3>项目列表</h3>
-                                <div id="riskProjectList" class="project-list-container" style="max-height: 400px; overflow-y: auto;">
-                                    <!-- 项目列表项将通过JavaScript动态添加 -->
-                                </div>
-                                <!-- 饼图显示区 -->
-                                <div class="charts-section" style="margin-top: 15px; margin-bottom: 15px;">
-                                    <h3 style="font-size: 14px; margin-bottom: 10px;">数据分布分析</h3>
-                                    <div class="charts-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                                        <!-- 等级分布饼图 -->
-                                        <div class="chart-card" style="background: #ffffff; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
-                                            <h4 style="margin-top: 0; margin-bottom: 8px; font-size: 13px; font-weight: 500;">1. 等级分布</h4>
-                                            <div style="display: flex; align-items: center; gap: 10px;">
-                                                <div style="width: 100px; height: 100px; flex-shrink: 0;">
-                                                    <canvas id="priorityChart" width="100" height="100" style="width: 100px; height: 100px;"></canvas>
-                                                </div>
-                                                <div style="font-size: 11px; color: #64748b; line-height: 1.6;">
-                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #ef4444; border-radius: 2px; margin-right: 4px;"></span>Block-阻塞</div>
-                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #f97316; border-radius: 2px; margin-right: 4px;"></span>Critical-严重</div>
-                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #f59e0b; border-radius: 2px; margin-right: 4px;"></span>Major-主要</div>
-                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #10b981; border-radius: 2px; margin-right: 4px;"></span>Minor-次要</div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <!-- 严重问题等级分布饼图 -->
-                                        <div class="chart-card" style="background: #ffffff; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
-                                            <h4 style="margin-top: 0; margin-bottom: 8px; font-size: 13px; font-weight: 500;">2. 严重问题等级分布</h4>
-                                            <div style="display: flex; align-items: center; gap: 10px;">
-                                                <div style="width: 100px; height: 100px; flex-shrink: 0;">
-                                                    <canvas id="criticalChart" width="100" height="100" style="width: 100px; height: 100px;"></canvas>
-                                                </div>
-                                                <div style="font-size: 11px; color: #64748b; line-height: 1.6;">
-                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #ef4444; border-radius: 2px; margin-right: 4px;"></span>阻塞问题</div>
-                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #f97316; border-radius: 2px; margin-right: 4px;"></span>MP BLOCK</div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <!-- 问题状态分布饼图 -->
-                                        <div class="chart-card" style="background: #ffffff; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
-                                            <h4 style="margin-top: 0; margin-bottom: 8px; font-size: 13px; font-weight: 500;">3. 问题状态分布</h4>
-                                            <div style="display: flex; align-items: center; gap: 10px;">
-                                                <div style="width: 100px; height: 100px; flex-shrink: 0;">
-                                                    <canvas id="statusChart" width="100" height="100" style="width: 100px; height: 100px;"></canvas>
-                                                </div>
-                                                <div style="font-size: 11px; color: #64748b; line-height: 1.5; max-height: 100px; overflow-y: auto;">
-                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #ef4444; border-radius: 2px; margin-right: 3px;"></span>Open</div>
-                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #f97316; border-radius: 2px; margin-right: 3px;"></span>In Progress</div>
-                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #f59e0b; border-radius: 2px; margin-right: 3px;"></span>Fixed</div>
-                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #10b981; border-radius: 2px; margin-right: 3px;"></span>Submitted</div>
-                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #3b82f6; border-radius: 2px; margin-right: 3px;"></span>Reopened</div>
-                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #8b5cf6; border-radius: 2px; margin-right: 3px;"></span>Modifying</div>
-                                                    <div><span style="display: inline-block; width: 8px; height: 8px; background: #6b7280; border-radius: 2px; margin-right: 3px;"></span>Abandoned</div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <!-- 提交分布饼图 -->
-                                        <div class="chart-card" style="background: #ffffff; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
-                                            <h4 style="margin-top: 0; margin-bottom: 8px; font-size: 13px; font-weight: 500;">4. 提交分布</h4>
-                                            <div style="display: flex; align-items: center; gap: 10px;">
-                                                <div style="width: 100px; height: 100px; flex-shrink: 0;">
-                                                    <canvas id="submissionChart" width="100" height="100" style="width: 100px; height: 100px;"></canvas>
-                                                </div>
-                                                <div style="font-size: 11px; color: #64748b; line-height: 1.6;">
-                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #3b82f6; border-radius: 2px; margin-right: 4px;"></span>含交付bug</div>
-                                                    <div><span style="display: inline-block; width: 10px; height: 10px; background: #10b981; border-radius: 2px; margin-right: 4px;"></span>不含交付bug</div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <!-- 右侧分析展示区 -->
-                            <div class="risk-analysis-display" style="flex: 1.5; min-width: 450px;">
-                                <h3>风险分析摘要</h3>
-                                <div id="riskAnalysisSummary" class="analysis-summary-container" style="background: #f8fafc; padding: 20px; border-radius: 8px;">
-                                    <p>待生成数据分析中</p>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- 共性问题识别区 -->
-                        <div class="common-issues-section" style="width: 100%;">
-                            <h3>共性问题识别</h3>
-                            <div id="commonIssuesContainer" class="common-issues-container" style="background: #f8fafc; padding: 20px; border-radius: 8px; max-height: 300px; overflow-y: auto;">
-                                <p>正在分析共性问题...</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
                 
-                <!-- 项目管理助手面板 -->
-                <div id="projectPanel" class="panel">
-                    <h2>项目管理助手</h2>
+                <!-- 项目管理助手数据 -->
+                <div id="projectPanel" class="tab-content">
+                    <h3>项目管理助手</h3>
                     <div class="search-section">
                         <input type="text" id="projectMgmtSearch" placeholder="搜索项目...">
                         <button id="projectMgmtSearchBtn">搜索</button>
                     </div>
-                    <div class="welcome-card">
-                        <h3>项目管理助手</h3>
-                        <p>该助手可以：</p>
-                        <ul>
-                            <li>📊 对在研项目各项目进行监控，计算进度偏差</li>
-                            <li>📅 提供节点、进度相关信息查询</li>
-                            <li>💡 提供项目管理相关知识</li>
-                        </ul>
-                        <p>请使用右侧AI分析助手询问相关问题</p>
+                    <div id="projectMgmtContent">
+                        <p>请选择一个项目查看详情</p>
                     </div>
                 </div>
 
-                <!-- 详情页面板 -->
-                <div id="detailPanel" class="panel">
-                    <h2>项目详情分析</h2>
-                    <button id="backBtn">返回</button>
-                    <div id="detailContent"></div>
-                </div>
-            </div>
+                <!-- 项目进度风险看板 -->
+                <div id="progressPanel" class="tab-content">
 
-            <!-- 右侧AI聊天区 -->
-            <div class="content-right">
-                <div class="ai-chat">
-                    <div class="chat-header">
-                        <h3>AI 分析助手</h3>
+                    <input type="file" id="progressFileInput" accept=".xlsx" style="display:none;">
+
+                    <!-- ====== 顶部导航 ====== -->
+                    <div class="prog-topnav">
+                        <div class="prog-topnav-left">
+                            <span class="prog-topnav-logo">◆</span>
+                            <span class="prog-topnav-title">项目全周期管理平台</span>
+                        </div>
+                        <div class="prog-topnav-right">
+                            <button id="progressImportBtn" class="prog-topnav-btn prog-topnav-import">📤 导入文件</button>
+                            <span class="prog-topnav-user">👤</span>
+                            <button id="progressExportBtn" class="prog-topnav-btn prog-topnav-export" disabled>📥 导出报告</button>
+                        </div>
                     </div>
-                    <div class="chat-messages" id="chatMessages"></div>
-                    <div class="chat-input">
-                        <input type="text" id="aiInput" placeholder="输入分析请求...">
-                        <button id="sendBtn">发送</button>
+
+                    <div id="progressDashboard" style="display:none;">
+
+                        <!-- ====== AI智能分析旗舰框 ====== -->
+                        <div class="prog-ai-banner" id="progAiBanner" style="display:none;">
+                            <div class="prog-ai-banner-inner">
+                                <div class="prog-ai-avatar">🤖</div>
+                                <div class="prog-ai-body">
+                                    <div class="prog-ai-title">AI 智能分析 核心</div>
+                                    <div class="prog-ai-summary" id="progAiSummary"></div>
+                                    <div class="prog-ai-detail" id="progAiDetail"></div>
+                                </div>
+                                <div class="prog-ai-actions">
+                                    <button class="prog-ai-expand-btn" id="progAiExpandBtn" title="放大查看">⛶</button>
+                                    <button class="prog-ai-correct-btn" id="progAiCorrectBtn" title="列映射纠错">✎</button>
+                                </div>
+                            </div>
+                            <div class="prog-ai-badge" id="progAiBadge" style="display:none;">分析完成 ✅</div>
+                        </div>
+
+                        <!-- ====== 图表可视化区域 ====== -->
+                        <div class="prog-charts-row" id="progChartsRow" style="display:none;">
+                            <div class="prog-chart-card" id="progChartRiskPie">
+                                <div class="prog-chart-card-header">风险分布</div>
+                                <div class="prog-chart-card-body">
+                                    <canvas id="chartRiskPie"></canvas>
+                                </div>
+                            </div>
+                            <div class="prog-chart-card" id="progChartSwimlane">
+                                <div class="prog-chart-card-header">泳道分布</div>
+                                <div class="prog-chart-card-body">
+                                    <canvas id="chartSwimlane"></canvas>
+                                </div>
+                            </div>
+                            <div class="prog-chart-card" id="progChartTrend">
+                                <div class="prog-chart-card-header">趋势分析</div>
+                                <div class="prog-chart-card-body">
+                                    <canvas id="chartTrend"></canvas>
+                                </div>
+                            </div>
+                            <div class="prog-chart-card" id="progChartProgress">
+                                <div class="prog-chart-card-header">项目进度分布</div>
+                                <div class="prog-chart-card-body">
+                                    <canvas id="chartProgress"></canvas>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ====== 概览统计（1行5列） ====== -->
+                        <div class="prog-stats-row" id="progStatsRow" style="display:none;">
+                            <div class="prog-stats-line" id="progStatsLine"></div>
+                        </div>
+
+                        <!-- ====== 筛选栏 ====== -->
+                        <div class="prog-filter-bar" id="progFilterBar" style="display:none;">
+                            <select id="filterProject" class="prog-filter-select"><option value="">全部项目</option></select>
+                            <select id="filterPhase" class="prog-filter-select"><option value="">全部阶段</option></select>
+                            <select id="filterRisk" class="prog-filter-select"><option value="">全部风险</option></select>
+                            <input id="filterSearch" class="prog-filter-input" type="text" placeholder="🔍 搜索项目...">
+                        </div>
+
+                        <!-- ====== 主区域 ====== -->
+                        <div class="prog-main" id="progMain" style="display:none;">
+
+                            <!-- 左侧：项目泳道看板 (65%) -->
+                            <div class="prog-swimlane-area" id="progSwimlaneArea"></div>
+
+                            <!-- 右侧面板 (35%) -->
+                            <div class="prog-right-panel">
+
+                                <!-- 人力需求总览（全部 DPM 从大到小） -->
+                                <div class="prog-manpower-card" id="progManpowerCard" style="display:none;">
+                                    <div class="prog-manpower-header">📊 人力剩余需求总览（从大到小）</div>
+                                    <div class="prog-manpower-summary" id="progManpowerSummary"></div>
+                                    <div class="prog-manpower-table-wrap">
+                                        <table class="prog-manpower-table" id="progManpowerTable"></table>
+                                    </div>
+                                </div>
+
+                                <!-- 风险预警（红） -->
+                                <div class="prog-risk-card" id="progRiskCard" style="display:none;">
+                                    <div class="prog-risk-header">⚠️ 风险预警</div>
+                                    <div class="prog-risk-body" id="progRiskBody"></div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                        <!-- DPM 负责人详情弹窗 -->
+                        <div class="prog-modal-overlay" id="progDpmDetailOverlay" style="display:none;">
+                            <div class="prog-modal-content prog-modal-large" id="progDpmDetailContent"></div>
+                        </div>
+
+                        <!-- ====== 底部统计栏 ====== -->
+                        <div class="prog-bottom-bar" id="progBottomBar" style="display:none;"></div>
+
+                        <div id="progressUploadStatus" class="prog-upload-status"></div>
                     </div>
                 </div>
+
+                <!-- 人力洞察看板（HR Dashboard） -->
+                <div id="workforcePanel" class="tab-content">
+                    <div class="wf-container">
+
+                        <!-- ====== 顶部栏：上传(右上角) + AI输出 ====== -->
+                        <div class="hr-top-bar" id="hrTopBar">
+                            <!-- AI分析输出区 -->
+                            <div class="hr-ai-output" id="hrAiOutput" style="display:none;">
+                                <div class="hr-ai-header">
+                                    <span class="hr-ai-icon">🧠</span>
+                                    <span class="hr-ai-title">AI 人力分析报告</span>
+                                    <div class="hr-ai-toolbar" id="hrAiToolbar" style="display:none;">
+                                        <button class="hr-ai-tbtn" id="hrAiExpandBtn" title="放大查看">⛶</button>
+                                        <button class="hr-ai-tbtn" id="hrAiRegenBtn" title="重新生成">🔄</button>
+                                        <button class="hr-ai-tbtn" id="hrAiImproveBtn" title="改进">✏️</button>
+                                    </div>
+                                </div>
+                                <div class="hr-ai-body" id="hrAiBody">
+                                    <div class="hr-ai-loading">
+                                        <div class="hr-spinner"></div>
+                                        <span>正在生成分析报告...</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 上传入口（右上角） -->
+                            <div class="hr-upload-mini" id="hrUploadMini">
+                                <button class="hr-upload-mini-btn" onclick="document.getElementById('hrFileInput').click()">
+                                    <span class="hmb-icon">📤</span>
+                                    <span class="hmb-text">上传人力资源数据</span>
+                                </button>
+                                <input type="file" id="hrFileInput" accept=".xlsx,.xls,.csv" style="display:none;">
+                                <div class="hr-upload-mini-status" id="hrUploadStatus"></div>
+                            </div>
+                        </div>
+
+                        <!-- ====== 上传欢迎页面 ====== -->
+                        <div class="hr-welcome" id="hrWelcome">
+                            <div class="hr-welcome-card">
+                                <div class="hr-welcome-icon">👥</div>
+                                <h1 class="hr-welcome-title">人力洞察看板</h1>
+                                <p class="hr-welcome-desc">基于人力资源数据，实时洞察团队人力利用率、负荷状态与可调用资源，为管理决策提供数据支撑</p>
+                                <div class="hr-welcome-grid">
+                                    <div class="hr-welcome-item">
+                                        <div class="hwi-icon">🎯</div>
+                                        <div class="hwi-title">看板定位</div>
+                                        <div class="hwi-text">聚焦人力利用率与负荷分布，帮助管理者快速掌握团队效能状况，识别资源瓶颈与优化空间</div>
+                                    </div>
+                                    <div class="hr-welcome-item">
+                                        <div class="hwi-icon">💡</div>
+                                        <div class="hwi-title">解决问题</div>
+                                        <div class="hwi-text">实时预警高负荷团队风险、发现可调配人力资源、辅助人力规划与项目排期决策</div>
+                                    </div>
+                                    <div class="hr-welcome-item">
+                                        <div class="hwi-icon">📄</div>
+                                        <div class="hwi-title">支持格式</div>
+                                        <div class="hwi-text">支持 .xlsx、.xls、.csv 格式的 Excel 文件，上传后自动解析并生成可视化看板</div>
+                                    </div>
+                                    <div class="hr-welcome-item">
+                                        <div class="hwi-icon">📋</div>
+                                        <div class="hwi-title">内容要求</div>
+                                        <div class="hwi-text">必须包含：<strong>姓名</strong>、<strong>部门/小组</strong>、<strong>人力利用率</strong>；建议包含：任务类型、任务名称、标准负载</div>
+                                    </div>
+                                </div>
+                                <div class="hr-welcome-upload">
+                                    <button class="hr-welcome-btn" onclick="document.getElementById('hrFileInput').click()">
+                                        <span>📤</span> 上传人力资源数据文件
+                                    </button>
+                                    <p class="hr-welcome-hint">点击上传，系统将自动识别文件内容并生成看板</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ====== 部门 Sheet 切换按钮 ====== -->
+                        <div class="hr-dept-tabs" id="hrDeptTabs" style="display:none;"></div>
+
+                        <!-- ====== 下钻面包屑导航 ====== -->
+                        <div class="hr-breadcrumb" id="hrBreadcrumb" style="display:none;">
+                            <span class="hr-breadcrumb-item" id="hrBreadDept"></span>
+                            <span class="hr-breadcrumb-sep">›</span>
+                            <span class="hr-breadcrumb-item hr-breadcrumb-current" id="hrBreadCurrent">全部小组</span>
+                        </div>
+
+                        <!-- ====== 看板内容区域 ====== -->
+                        <div class="hr-content" id="hrContent" style="display:none;">
+
+                            <!-- KPI 指标卡（二级部门） -->
+                            <div class="hr-section-label">📌 二级部门总览</div>
+                            <div class="hr-kpi-row" id="hrKpiRow"></div>
+
+                            <!-- 三级部门卡片 -->
+                            <div class="hr-section-label">🏢 三级部门详情</div>
+                            <div class="hr-group-cards" id="hrGroupCards"></div>
+
+                            <!-- 图例 -->
+                            <div class="hr-legend">
+                                <span class="hr-legend-item"><span class="hr-dot hr-dot-green"></span> 空闲（≤90%）</span>
+                                <span class="hr-legend-item"><span class="hr-dot hr-dot-blue"></span> 正常（90%-110%）</span>
+                                <span class="hr-legend-item"><span class="hr-dot hr-dot-yellow"></span> 低负载（110%-120%）</span>
+                                <span class="hr-legend-item"><span class="hr-dot hr-dot-red"></span> 高负载（>120%）</span>
+                                <span class="hr-legend-item" style="margin-left:16px;color:#888;">点击柱状图或表格行可下钻查看明细</span>
+                            </div>
+
+                            <!-- 图表行：柱状图 + 折线图 -->
+                            <div class="hr-charts-row">
+                                <div class="hr-chart-card hr-chart-half">
+                                    <h4 class="hr-chart-title" id="hrChartTitle">📊 人力利用率</h4>
+                                    <div class="hr-chart-holder">
+                                        <canvas id="hrBarChart"></canvas>
+                                        <div class="hr-chart-empty" id="hrBarChartEmpty" style="display:none;"></div>
+                                    </div>
+                                </div>
+                                <div class="hr-chart-card hr-chart-half">
+                                    <h4 class="hr-chart-title">📈 任务分布趋势</h4>
+                                    <div class="hr-chart-holder">
+                                        <canvas id="hrLineChart"></canvas>
+                                        <div class="hr-chart-empty" id="hrLineChartEmpty" style="display:none;"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 表格1：小组明细 -->
+                            <div class="hr-table-card">
+                                <div class="hr-table-header">
+                                    <h4 id="hrTableTitle">📋 小组明细</h4>
+                                    <div class="hr-table-controls">
+                                        <label class="hr-sort-label">排序：</label>
+                                        <select class="hr-sort-select" id="hrSortSelect">
+                                            <option value="utilization_desc">利用率 ↓</option>
+                                            <option value="utilization_asc">利用率 ↑</option>
+                                            <option value="tasks_desc">任务数 ↓</option>
+                                            <option value="tasks_asc">任务数 ↑</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="hr-table-wrapper" id="hrTableWrapper"></div>
+                            </div>
+
+                            <!-- 表格2：人力资源分布 -->
+                            <div class="hr-table-card" id="hrDistCard" style="margin-top:24px;">
+                                <div class="hr-table-header">
+                                    <h4>👥 人力资源分布</h4>
+                                </div>
+                                <div class="hr-table-wrapper" id="hrDistWrapper"></div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                    <!-- ====== AI输出放大弹窗 ====== -->
+                    <div class="prog-modal-overlay" id="progAiOverlay" style="display:none;">
+                        <div class="prog-modal-content" id="progAiOverlayContent">
+                            <div class="prog-modal-header">
+                                <span class="prog-modal-title">AI 分析报告</span>
+                                <button class="prog-modal-close" id="progAiOverlayClose">✕</button>
+                            </div>
+                            <div class="prog-modal-body" id="progAiOverlayBody"></div>
+                        </div>
+                    </div>
+
+                    <!-- ====== 列映射纠错弹窗 ====== -->
+                    <div class="prog-modal-overlay" id="progCorrectOverlay" style="display:none;">
+                        <div class="prog-modal-content prog-modal-medium" id="progCorrectContent">
+                            <div class="prog-modal-header">
+                                <span class="prog-modal-title">列映射纠错</span>
+                                <button class="prog-modal-close" id="progCorrectClose">✕</button>
+                            </div>
+                            <div class="prog-modal-body" id="progCorrectBody">
+                                <p class="prog-correct-desc">如果以下列名识别有误，请重新选择正确的字段映射：</p>
+                                <div id="progCorrectList"></div>
+                                <div class="prog-correct-actions">
+                                    <button class="prog-correct-submit" id="progCorrectSubmit">确认修正</button>
+                                    <button class="prog-correct-cancel" id="progCorrectCancel">取消</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ====== AI改进弹窗 ====== -->
+                    <div class="prog-modal-overlay" id="hrImproveOverlay" style="display:none;">
+                        <div class="prog-modal-content" id="hrImproveContent">
+                            <div class="prog-modal-header">
+                                <span class="prog-modal-title">✏️ 改进分析报告</span>
+                                <button class="prog-modal-close" id="hrImproveClose">✕</button>
+                            </div>
+                            <div class="prog-modal-body">
+                                <p style="color:#94a3b8;margin-bottom:1rem;">请输入您对当前分析报告的改进意见，AI将根据您的反馈重新生成：</p>
+                                <textarea id="hrImproveInput" class="hr-improve-input" placeholder="例如：请更详细地分析各小组的负荷分布，重点关注超过100%利用率的团队..."></textarea>
+                                <div class="hr-improve-actions">
+                                    <button class="hr-improve-submit" id="hrImproveSubmit">提交并重新生成</button>
+                                    <button class="hr-improve-cancel" id="hrImproveCancel">取消</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                <!-- ====== 交付路线图看板 ====== -->
+                <div id="deliveryPanel" class="tab-content">
+                    <div class="dl-container">
+
+                        <!-- ====== 顶部栏：AI输出 + 上传 ====== -->
+                        <div class="dl-top-bar" id="dlTopBar">
+                            <!-- AI分析输出区 -->
+                            <div class="dl-ai-output" id="dlAiOutput" style="display:none;">
+                                <div class="dl-ai-header">
+                                    <span class="dl-ai-icon">🧠</span>
+                                    <span class="dl-ai-title">AI 交付分析报告</span>
+                                    <div class="dl-ai-toolbar" id="dlAiToolbar" style="display:none;">
+                                        <button class="dl-ai-tbtn" id="dlAiExpandBtn" title="放大查看">⛶</button>
+                                        <button class="dl-ai-tbtn" id="dlAiRegenBtn" title="重新生成">🔄</button>
+                                        <button class="dl-ai-tbtn" id="dlAiImproveBtn" title="改进">✏️</button>
+                                    </div>
+                                </div>
+                                <div class="dl-ai-body" id="dlAiBody">
+                                    <div class="dl-ai-loading">
+                                        <div class="dl-spinner"></div>
+                                        <span>正在生成分析报告...</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 上传入口 -->
+                            <div class="dl-upload-mini" id="dlUploadMini">
+                                <button class="dl-upload-mini-btn" onclick="document.getElementById('dlFileInput').click()">
+                                    <span class="dlmb-icon">📤</span>
+                                    <span class="dlmb-text">上传交付路线图数据</span>
+                                </button>
+                                <input type="file" id="dlFileInput" accept=".xlsx,.xls,.csv" style="display:none;">
+                                <div class="dl-upload-mini-status" id="dlUploadStatus"></div>
+                            </div>
+                        </div>
+
+                        <!-- ====== 上传欢迎页面 ====== -->
+                        <div class="dl-welcome" id="dlWelcome" style="display:none;">
+                            <div class="dl-welcome-card">
+                                <div class="dl-welcome-icon">🚚</div>
+                                <h1 class="dl-welcome-title">交付路线图看板</h1>
+                                <p class="dl-welcome-desc">基于交付路线图数据，实时追踪项目交付进展，识别延期风险，为交付管理决策提供数据支撑</p>
+                                <div class="dl-welcome-grid">
+                                    <div class="dl-welcome-item">
+                                        <div class="dlwi-icon">🎯</div>
+                                        <div class="dlwi-title">看板定位</div>
+                                        <div class="dlwi-text">聚焦交付物进度与里程碑达成，帮助管理者掌握整体交付健康状况，识别交付风险与瓶颈</div>
+                                    </div>
+                                    <div class="dl-welcome-item">
+                                        <div class="dlwi-icon">💡</div>
+                                        <div class="dlwi-title">解决问题</div>
+                                        <div class="dlwi-text">实时预警交付延期风险、发现交付瓶颈环节、辅助资源调度与交付计划决策</div>
+                                    </div>
+                                    <div class="dl-welcome-item">
+                                        <div class="dlwi-icon">📄</div>
+                                        <div class="dlwi-title">支持格式</div>
+                                        <div class="dlwi-text">支持 .xlsx、.xls、.csv 格式的多Sheet文件，上传后自动切片并生成可视化看板</div>
+                                    </div>
+                                    <div class="dl-welcome-item">
+                                        <div class="dlwi-icon">📋</div>
+                                        <div class="dlwi-title">内容要求</div>
+                                        <div class="dlwi-text">建议包含：<strong>交付物</strong>、<strong>里程碑/阶段</strong>、<strong>计划日期</strong>、<strong>状态/风险</strong>；系统自动识别列名</div>
+                                    </div>
+                                </div>
+                                <div class="dl-welcome-upload">
+                                    <button class="dl-welcome-btn" onclick="document.getElementById('dlFileInput').click()">
+                                        <span>📤</span> 上传交付路线图数据文件
+                                    </button>
+                                    <p class="dl-welcome-hint">点击上传，系统将自动识别多Sheet内容并生成看板</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ====== 7板块看板内容区域 ====== -->
+                        <div class="dl-content" id="dlContent" style="display:none;">
+
+                            <!-- ====== Navigation Header ====== -->
+                            <div class="dl-nav-header" id="dlNavHeader">
+                                <div class="dl-nav-content">
+                                    <div class="dl-nav-title">
+                                        <span>📊</span>
+                                        <span>交付路线图 & 人力分析仪表盘</span>
+                                    </div>
+                                    <div class="dl-nav-links" id="dlNavLinks">
+                                        <a href="#dl-section-overview" class="dl-nav-link">看板首页</a>
+                                        <a href="#dl-section-gantt" class="dl-nav-link">风险分布</a>
+                                        <a href="#dl-section-dpm" class="dl-nav-link">DPM分布</a>
+                                        <a href="#dl-section-capacity" class="dl-nav-link">编制评估</a>
+                                        <a href="#dl-section-conclusions" class="dl-nav-link">结论建议</a>
+                                        <a href="#dl-section-milestone" class="dl-nav-link">里程碑</a>
+                                        <a href="#dl-section-maintenance" class="dl-nav-link">未转维</a>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ====== Filter Controls ====== -->
+                            <div class="dl-filter-bar" id="dlFilterBar">
+                                <div class="dl-filter-group">
+                                    <span class="dl-filter-label">风险等级:</span>
+                                    <select class="dl-filter-select" id="dlRiskFilter">
+                                        <option value="all">全部</option>
+                                        <option value="high">高风险</option>
+                                        <option value="mid">中风险</option>
+                                        <option value="low">低风险</option>
+                                    </select>
+                                </div>
+                                <div class="dl-filter-group">
+                                    <span class="dl-filter-label">项目类型:</span>
+                                    <select class="dl-filter-select" id="dlTypeFilter">
+                                        <option value="all">全部</option>
+                                        <option value="software">软测</option>
+                                        <option value="hardware">硬测</option>
+                                        <option value="ota">OTA</option>
+                                    </select>
+                                </div>
+                                <div class="dl-filter-group">
+                                    <span class="dl-filter-label">部门:</span>
+                                    <select class="dl-filter-select" id="dlDeptFilter">
+                                        <option value="all">全部</option>
+                                    </select>
+                                </div>
+                                <div class="dl-refresh-indicator" id="dlRefreshIndicator">
+                                    <span class="dl-refresh-dot"></span>
+                                    <span id="dlRefreshTime">数据加载中...</span>
+                                </div>
+                            </div>
+
+                            <!-- ======== SECTION 1: Overview ======== -->
+                            <section id="dl-section-overview" class="dl-section-card">
+                                <div class="dl-section-hd">
+                                    <h2 class="dl-section-hd-title">📊 交付项目Roadmap & 人力地图 - 风险总览仪表盘</h2>
+                                    <p class="dl-section-hd-sub">全部数据整合 | 项目整体健康度</p>
+                                </div>
+                                <div class="dl-section-bd">
+                                    <!-- KPI Cards -->
+                                    <div class="dl-kpi-grid" id="dlKpiGrid"></div>
+
+                                    <!-- Executive Summary -->
+                                    <div class="dl-exec-summary" id="dlExecSummary">
+                                        <div class="dl-exec-summary-title"><span>⚠️</span> <span>整体风险评估</span></div>
+                                        <p class="dl-exec-summary-text" id="dlExecSummaryText">数据加载中...</p>
+                                    </div>
+
+                                    <!-- Manpower Trend Chart -->
+                                    <h3 class="dl-chart-section-title">人力走势趋势图</h3>
+                                    <div id="dlManpowerTrendChart" class="dl-chart-lg"></div>
+                                </div>
+                            </section>
+
+                            <!-- ======== SECTION 2: Risk Gantt ======== -->
+                            <section id="dl-section-gantt" class="dl-section-card">
+                                <div class="dl-section-hd">
+                                    <h2 class="dl-section-hd-title">📋 板块1：项目整体风险分布看板</h2>
+                                    <p class="dl-section-hd-sub">横向时间轴 × 纵向项目 — 甘特图呈现</p>
+                                </div>
+                                <div class="dl-section-bd">
+                                    <div class="dl-two-col">
+                                        <div>
+                                            <h3 class="dl-chart-section-title">项目Timeline甘特图</h3>
+                                            <div id="dlGanttChart" class="dl-chart-lg"></div>
+                                        </div>
+                                        <div class="dl-risk-summary" id="dlRiskSummary">
+                                            <h3 class="dl-risk-summary-title">📈 风险区间分析</h3>
+                                            <div id="dlRiskSummaryBody">
+                                                <div class="dl-risk-item"><span class="dl-risk-label">加载中...</span></div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Project Risk Table -->
+                                    <h3 class="dl-chart-section-title" style="margin-top:24px;">项目风险明细表</h3>
+                                    <div class="dl-table-responsive" id="dlProjectRiskTable"></div>
+                                </div>
+                            </section>
+
+                            <!-- ======== SECTION 3: DPM Distribution ======== -->
+                            <section id="dl-section-dpm" class="dl-section-card">
+                                <div class="dl-section-hd">
+                                    <h2 class="dl-section-hd-title">👤 板块2：各项目DPM看板分布</h2>
+                                    <p class="dl-section-hd-sub">DPM人力负载热力图 × 个人风险评估</p>
+                                </div>
+                                <div class="dl-section-bd">
+                                    <div class="dl-two-col">
+                                        <div>
+                                            <h3 class="dl-chart-section-title">DPM负载热力图</h3>
+                                            <div id="dlDpmHeatmapChart" class="dl-chart-heatmap"></div>
+                                        </div>
+                                        <div>
+                                            <h3 class="dl-chart-section-title">DPM人力柱状图</h3>
+                                            <div id="dlDpmBarChart" class="dl-chart-md"></div>
+                                        </div>
+                                    </div>
+
+                                    <h3 class="dl-chart-section-title" style="margin-top:24px;">DPM风险评估表</h3>
+                                    <div class="dl-table-responsive" id="dlDpmTable"></div>
+                                </div>
+                            </section>
+
+                            <!-- ======== SECTION 4: Capacity Assessment ======== -->
+                            <section id="dl-section-capacity" class="dl-section-card">
+                                <div class="dl-section-hd">
+                                    <h2 class="dl-section-hd-title">⚠️ 板块3：项目编制风险评估看板</h2>
+                                    <p class="dl-section-hd-sub">编制人力 vs 实际需求 对比分析</p>
+                                </div>
+                                <div class="dl-section-bd">
+                                    <div class="dl-two-col">
+                                        <div>
+                                            <h3 class="dl-chart-section-title">编制人力与需求对比图</h3>
+                                            <div id="dlCapacityChart" class="dl-chart-lg"></div>
+                                        </div>
+                                        <div>
+                                            <h3 class="dl-chart-section-title">各部门人力需求</h3>
+                                            <div id="dlStackedChart" class="dl-chart-lg"></div>
+                                        </div>
+                                    </div>
+
+                                    <h3 class="dl-chart-section-title" style="margin-top:24px;">编制风险评估表</h3>
+                                    <div class="dl-table-responsive" id="dlStaffingRiskTable"></div>
+                                </div>
+                            </section>
+
+                            <!-- ======== SECTION 5: Conclusions ======== -->
+                            <section id="dl-section-conclusions" class="dl-section-card">
+                                <div class="dl-section-hd">
+                                    <h2 class="dl-section-hd-title">📌 板块4：结论与建议</h2>
+                                    <p class="dl-section-hd-sub">整体风险判断 × 优先级排序 × 跨部门协作建议</p>
+                                </div>
+                                <div class="dl-section-bd">
+                                    <div class="dl-exec-summary" style="margin-bottom:24px;" id="dlConclusionSummary">
+                                        <div class="dl-exec-summary-title"><span>🎯</span> <span>整体风险等级</span></div>
+                                        <p class="dl-exec-summary-text" id="dlConclusionSummaryText">综合分析中...</p>
+                                    </div>
+
+                                    <h3 class="dl-chart-section-title">优先级跟进事项</h3>
+                                    <ul class="dl-priority-list" id="dlPriorityList"></ul>
+
+                                    <h3 class="dl-chart-section-title" style="margin-top:24px;">跨部门协作需求</h3>
+                                    <div class="dl-collab-grid" id="dlCollabGrid"></div>
+                                </div>
+                            </section>
+
+                            <!-- ======== SECTION 6: Milestones ======== -->
+                            <section id="dl-section-milestone" class="dl-section-card">
+                                <div class="dl-section-hd">
+                                    <h2 class="dl-section-hd-title">🎯 板块5（补充）：项目里程碑追踪 & 风险预警矩阵</h2>
+                                    <p class="dl-section-hd-sub">关键里程碑时间轴 × 风险预警矩阵</p>
+                                </div>
+                                <div class="dl-section-bd">
+                                    <div class="dl-two-col">
+                                        <div>
+                                            <h3 class="dl-chart-section-title">关键里程碑时间轴</h3>
+                                            <div class="dl-timeline" id="dlTimeline"></div>
+                                        </div>
+                                        <div>
+                                            <h3 class="dl-chart-section-title">风险预警矩阵</h3>
+                                            <div class="dl-table-responsive" id="dlRiskMatrixTable"></div>
+
+                                            <h3 class="dl-chart-section-title" style="margin-top:24px;">应对策略</h3>
+                                            <div class="dl-risk-summary" id="dlStrategyList"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <!-- ======== SECTION 7: Maintenance ======== -->
+                            <section id="dl-section-maintenance" class="dl-section-card">
+                                <div class="dl-section-hd">
+                                    <h2 class="dl-section-hd-title">🔄 板块6（补充）：未转维项目 & DPM分配看板</h2>
+                                    <p class="dl-section-hd-sub">未转维项目追踪 × 后续产品线DPM分配</p>
+                                </div>
+                                <div class="dl-section-bd">
+                                    <h3 class="dl-chart-section-title">未转维项目明细</h3>
+                                    <div class="dl-table-responsive" id="dlMaintenanceTable"></div>
+
+                                    <h3 class="dl-chart-section-title" style="margin-top:24px;">后续产品线DPM分配统计</h3>
+                                    <div id="dlDpmAllocationChart" class="dl-chart-md"></div>
+                                </div>
+                            </section>
+
+                        </div><!-- /dl-content -->
+                    </div><!-- /dl-container -->
+                </div>
+
+                <!-- ====== 知识库管理页面 ====== -->
+                <div id="knowledgePanel" class="tab-content">
+                    <div class="km-container">
+                        <!-- 顶部标题 -->
+                        <div class="km-header">
+                            <div class="km-header-title">
+                                <span class="km-header-icon">📚</span>
+                                <h2>知识库管理</h2>
+                            </div>
+                            <div class="km-header-tabs">
+                                <button class="km-tab-btn active" data-km-tab="upload">知识上传</button>
+                                <button class="km-tab-btn" data-km-tab="manage">知识库管理</button>
+                            </div>
+                        </div>
+
+                        <!-- ====== 知识上传 Tab ====== -->
+                        <div class="km-tab-content active" id="kmUploadTab">
+                            <div class="km-upload-columns">
+                                <!-- 项目信息知识 -->
+                                <div class="km-column" data-category="project_info">
+                                    <div class="km-column-header" style="border-color:#3498db;">
+                                        <span class="km-column-icon">📋</span>
+                                        <h3>项目信息知识</h3>
+                                    </div>
+                                    <div class="km-column-body">
+                                        <div class="km-field">
+                                            <label>分类</label>
+                                            <select class="km-subcategory-select">
+                                                <option value="">选择子分类...</option>
+                                            </select>
+                                        </div>
+                                        <div class="km-field">
+                                            <label>上传方式</label>
+                                            <div class="km-upload-methods">
+                                                <label class="km-method-btn active">
+                                                    <input type="radio" name="method_project_info" value="file" checked hidden>
+                                                    <span>📁 本地文件</span>
+                                                </label>
+                                                <label class="km-method-btn">
+                                                    <input type="radio" name="method_project_info" value="feishu" hidden>
+                                                    <span>☁️ 飞书文档</span>
+                                                </label>
+                                                <label class="km-method-btn">
+                                                    <input type="radio" name="method_project_info" value="link" hidden>
+                                                    <span>🔗 网络链接</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="km-field km-file-field">
+                                            <input type="file" class="km-file-input" multiple>
+                                            <input type="text" class="km-url-input" placeholder="输入飞书文档URL或网络链接..." style="display:none;">
+                                        </div>
+                                        <div class="km-field">
+                                            <label>知识类型</label>
+                                            <select class="km-knowledge-type">
+                                                <option value="methodology">方法论</option>
+                                                <option value="standard">规范标准</option>
+                                                <option value="guide">操作指南</option>
+                                                <option value="reference">参考资料</option>
+                                                <option value="case">案例经验</option>
+                                                <option value="other">其他</option>
+                                            </select>
+                                        </div>
+                                        <div class="km-field">
+                                            <label>知识描述</label>
+                                            <textarea class="km-desc-input" placeholder="请简要描述这份知识的内容和用途..." rows="3"></textarea>
+                                        </div>
+                                        <div class="km-field">
+                                            <label>标签（逗号分隔）</label>
+                                            <input type="text" class="km-tags-input" placeholder="例如：项目配置, 环境参数">
+                                        </div>
+                                        <button class="km-upload-submit" data-category="project_info">📤 上传知识库</button>
+                                        <div class="km-upload-status"></div>
+                                    </div>
+                                </div>
+
+                                <!-- 项目管理知识 -->
+                                <div class="km-column" data-category="project_management">
+                                    <div class="km-column-header" style="border-color:#2ecc71;">
+                                        <span class="km-column-icon">📊</span>
+                                        <h3>项目管理知识</h3>
+                                    </div>
+                                    <div class="km-column-body">
+                                        <div class="km-field">
+                                            <label>分类</label>
+                                            <select class="km-subcategory-select">
+                                                <option value="">选择子分类...</option>
+                                            </select>
+                                        </div>
+                                        <div class="km-field">
+                                            <label>上传方式</label>
+                                            <div class="km-upload-methods">
+                                                <label class="km-method-btn active">
+                                                    <input type="radio" name="method_project_management" value="file" checked hidden>
+                                                    <span>📁 本地文件</span>
+                                                </label>
+                                                <label class="km-method-btn">
+                                                    <input type="radio" name="method_project_management" value="feishu" hidden>
+                                                    <span>☁️ 飞书文档</span>
+                                                </label>
+                                                <label class="km-method-btn">
+                                                    <input type="radio" name="method_project_management" value="link" hidden>
+                                                    <span>🔗 网络链接</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="km-field km-file-field">
+                                            <input type="file" class="km-file-input" multiple>
+                                            <input type="text" class="km-url-input" placeholder="输入飞书文档URL或网络链接..." style="display:none;">
+                                        </div>
+                                        <div class="km-field">
+                                            <label>知识类型</label>
+                                            <select class="km-knowledge-type">
+                                                <option value="methodology">方法论</option>
+                                                <option value="standard">规范标准</option>
+                                                <option value="guide">操作指南</option>
+                                                <option value="reference">参考资料</option>
+                                                <option value="case">案例经验</option>
+                                                <option value="other">其他</option>
+                                            </select>
+                                        </div>
+                                        <div class="km-field">
+                                            <label>知识描述</label>
+                                            <textarea class="km-desc-input" placeholder="请简要描述这份知识的内容和用途..." rows="3"></textarea>
+                                        </div>
+                                        <div class="km-field">
+                                            <label>标签（逗号分隔）</label>
+                                            <input type="text" class="km-tags-input" placeholder="例如：流程管理, 敏捷开发">
+                                        </div>
+                                        <button class="km-upload-submit" data-category="project_management">📤 上传知识库</button>
+                                        <div class="km-upload-status"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Jira规范知识 -->
+                                <div class="km-column" data-category="jira_spec">
+                                    <div class="km-column-header" style="border-color:#e74c3c;">
+                                        <span class="km-column-icon">🎯</span>
+                                        <h3>Jira规范知识</h3>
+                                    </div>
+                                    <div class="km-column-body">
+                                        <div class="km-field">
+                                            <label>分类</label>
+                                            <select class="km-subcategory-select">
+                                                <option value="">选择子分类...</option>
+                                            </select>
+                                        </div>
+                                        <div class="km-field">
+                                            <label>上传方式</label>
+                                            <div class="km-upload-methods">
+                                                <label class="km-method-btn active">
+                                                    <input type="radio" name="method_jira_spec" value="file" checked hidden>
+                                                    <span>📁 本地文件</span>
+                                                </label>
+                                                <label class="km-method-btn">
+                                                    <input type="radio" name="method_jira_spec" value="feishu" hidden>
+                                                    <span>☁️ 飞书文档</span>
+                                                </label>
+                                                <label class="km-method-btn">
+                                                    <input type="radio" name="method_jira_spec" value="link" hidden>
+                                                    <span>🔗 网络链接</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="km-field km-file-field">
+                                            <input type="file" class="km-file-input" multiple>
+                                            <input type="text" class="km-url-input" placeholder="输入飞书文档URL或网络链接..." style="display:none;">
+                                        </div>
+                                        <div class="km-field">
+                                            <label>知识类型</label>
+                                            <select class="km-knowledge-type">
+                                                <option value="methodology">方法论</option>
+                                                <option value="standard">规范标准</option>
+                                                <option value="guide">操作指南</option>
+                                                <option value="reference">参考资料</option>
+                                                <option value="case">案例经验</option>
+                                                <option value="other">其他</option>
+                                            </select>
+                                        </div>
+                                        <div class="km-field">
+                                            <label>知识描述</label>
+                                            <textarea class="km-desc-input" placeholder="请简要描述这份知识的内容和用途..." rows="3"></textarea>
+                                        </div>
+                                        <div class="km-field">
+                                            <label>标签（逗号分隔）</label>
+                                            <input type="text" class="km-tags-input" placeholder="例如：验收规范, JQL规则">
+                                        </div>
+                                        <button class="km-upload-submit" data-category="jira_spec">📤 上传知识库</button>
+                                        <div class="km-upload-status"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ====== 知识库管理 Tab ====== -->
+                        <div class="km-tab-content" id="kmManageTab">
+                            <div class="km-manage-toolbar">
+                                <div class="km-search-box">
+                                    <input type="text" id="kmSearchInput" placeholder="搜索文件名、分类、描述...">
+                                    <button id="kmSearchBtn">🔍 搜索</button>
+                                </div>
+                                <div class="km-filter-group">
+                                    <select id="kmFilterCategory">
+                                        <option value="">全部分类</option>
+                                        <option value="project_info">📋 项目信息知识</option>
+                                        <option value="project_management">📊 项目管理知识</option>
+                                        <option value="jira_spec">🎯 Jira规范知识</option>
+                                    </select>
+                                    <select id="kmFilterStatus">
+                                        <option value="">全部状态</option>
+                                        <option value="uploaded">已上传</option>
+                                        <option value="processing">处理中</option>
+                                        <option value="processed">已处理</option>
+                                        <option value="trained">已训练</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="km-table-wrap">
+                                <table class="km-table">
+                                    <thead>
+                                        <tr>
+                                            <th>文件名</th>
+                                            <th>分类</th>
+                                            <th>大小</th>
+                                            <th>状态</th>
+                                            <th>上传时间</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="kmTableBody">
+                                        <tr><td colspan="6" class="km-table-empty">加载中...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
-        </main>
+        </aside>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/event-source-polyfill@1.0.31/src/eventsource.min.js"></script>
-    <script src="script.js"></script>
+    <!-- ====== 知识库切片查看弹窗 ====== -->
+    <div class="prog-modal-overlay" id="kmChunkOverlay" style="display:none;">
+        <div class="prog-modal-content prog-modal-large" id="kmChunkContent">
+            <div class="prog-modal-header">
+                <span class="prog-modal-title">📄 知识切片查看</span>
+                <button class="prog-modal-close" id="kmChunkClose">✕</button>
+            </div>
+            <div class="prog-modal-body" id="kmChunkBody">
+                <div class="km-chunk-info" id="kmChunkInfo"></div>
+                <div class="km-chunk-list" id="kmChunkList"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js?v=4.5"></script>
 </body>
 </html>
