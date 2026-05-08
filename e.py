@@ -877,11 +877,18 @@ def stream_ai_to_queue(messages, system_prompt, sse_queue, max_tokens=None, temp
         return None
 
 
-def format_portfolio_data(issues, project_names=None):
+def format_portfolio_data(issues, project_names=None, max_block=500, max_critical=300, max_high=200):
     """
     全量项目群数据格式化
-    对所有问题做全量统计、按项目分组、列出所有高风险问题
-    确保AI获得完整的全量数据视图
+    对所有问题做全量统计、按项目分组、按优先级列出
+    大数据量时自动截断详细列表，但保留完整统计
+
+    Args:
+        issues: Jira问题列表
+        project_names: 项目名映射
+        max_block: Block级别最多列出条数（默认500，通常很少）
+        max_critical: Critical级别最多列出条数
+        max_high: High/Major级别最多列出条数
     """
     if not issues:
         return "未查询到相关Jira数据。"
@@ -937,7 +944,11 @@ def format_portfolio_data(issues, project_names=None):
         else:
             other_issues.append(issue)
 
-    result = f"共查询到 {total} 个问题。⚠️重要提示：以下所有统计、项目分布、模块分析和风险评估均基于全部{total}个问题的全量数据，不存在任何数据截断或抽样。\n\n"
+    # 判断是否为大规模数据集
+    is_large = total > 2000
+    need_batch = total > 500  # 超过500条建议分批
+
+    result = f"共查询到 {total} 个问题。\n\n"
 
     # ── 注入 Affect Project 项目名映射 ──
     if project_names and len(project_names) > 0:
@@ -958,47 +969,63 @@ def format_portfolio_data(issues, project_names=None):
     result += f"- 优先级分布: {', '.join([f'{k}:{v}' for k, v in sorted(priority_counts.items())])}\n"
     result += f"- 类型分布: {', '.join([f'{k}:{v}' for k, v in sorted(type_counts.items())])}\n\n"
 
-    # 列出所有Block问题（全量）
+    # ── 列出Block问题（全量或截断）──
     if blocking_issues:
-        result += f"【高风险问题 - Block优先级】（全部{len(blocking_issues)}个）\n"
-        for i, issue in enumerate(blocking_issues, 1):
+        truncated = len(blocking_issues) > max_block
+        show_count = max_block if truncated else len(blocking_issues)
+        result += f"【高风险问题 - Block优先级】（共{len(blocking_issues)}个{'，仅展示前' + str(show_count) + '个' if truncated else '，全部列出'}）\n"
+        for i, issue in enumerate(blocking_issues[:show_count], 1):
             fields = issue.get('fields', {})
             summary = fields.get('summary', '无标题')[:80]
             status = fields.get('status', {}).get('name', '未知')
             assignee = fields.get('assignee', {}).get('displayName', '未分配') if fields.get('assignee') else '未分配'
             result += f"{i}. {issue['key']}: {summary}\n"
             result += f"   状态: {status}, 负责人: {assignee}\n\n"
+        if truncated:
+            result += f"... 另有 {len(blocking_issues) - max_block} 个Block问题未逐一列出\n\n"
     else:
         result += "【Block优先级问题】无\n\n"
 
-    # 列出所有Critical问题（全量，无限制）
+    # ── 列出Critical问题（全量或截断）──
     if critical_issues:
-        result += f"【高风险问题 - Critical优先级】（全部{len(critical_issues)}个）\n"
-        for i, issue in enumerate(critical_issues, 1):
+        truncated = len(critical_issues) > max_critical
+        show_count = max_critical if truncated else len(critical_issues)
+        result += f"【高风险问题 - Critical优先级】（共{len(critical_issues)}个{'，仅展示前' + str(show_count) + '个' if truncated else '，全部列出'}）\n"
+        for i, issue in enumerate(critical_issues[:show_count], 1):
             fields = issue.get('fields', {})
             summary = fields.get('summary', '无标题')[:80]
             status = fields.get('status', {}).get('name', '未知')
             assignee = fields.get('assignee', {}).get('displayName', '未分配') if fields.get('assignee') else '未分配'
             result += f"{i}. {issue['key']}: {summary}\n"
             result += f"   状态: {status}, 负责人: {assignee}\n\n"
+        if truncated:
+            result += f"... 另有 {len(critical_issues) - max_critical} 个Critical问题未逐一列出\n\n"
     else:
         result += "【Critical优先级问题】无\n\n"
 
-    # 列出所有High/Major问题（全量，无限制）
+    # ── 列出High/Major问题（全量或截断）──
     if high_issues:
-        result += f"【中优先级问题 - High/Major】（全部{len(high_issues)}个）\n"
-        for i, issue in enumerate(high_issues, 1):
+        truncated = len(high_issues) > max_high
+        show_count = max_high if truncated else len(high_issues)
+        result += f"【中优先级问题 - High/Major】（共{len(high_issues)}个{'，仅展示前' + str(show_count) + '个' if truncated else '，全部列出'}）\n"
+        for i, issue in enumerate(high_issues[:show_count], 1):
             fields = issue.get('fields', {})
             summary = fields.get('summary', '无标题')[:60]
             status = fields.get('status', {}).get('name', '未知')
             assignee = fields.get('assignee', {}).get('displayName', '未分配') if fields.get('assignee') else '未分配'
             result += f"{i}. {issue['key']}: {summary} [{status}] @{assignee}\n"
         result += "\n"
+        if truncated:
+            result += f"... 另有 {len(high_issues) - max_high} 个High/Major问题未逐一列出，约占全部问题的{round(len(high_issues)/total*100)}%\n\n"
 
     if other_issues:
         result += f"【低优先级问题】: 共{len(other_issues)}个（低优问题仅统计，未逐一列出）\n\n"
 
-    result += "⚠️ 再次强调：以上所有分析基于全量数据的完整计算，不存在数据边界限制。\n"
+    # 批量分析提示
+    if need_batch:
+        result += f"【批量分析提示】数据量较大（共{total}条），如需按模块/类型/项目做深度挖掘分析，请在提问中指定具体范围。\n\n"
+
+    result += f"⚠️ 以上统计信息基于全部{total}个问题的全量计算，详细列表根据优先级进行了适当压缩以确保AI能有效分析。\n"
     return result
 
 

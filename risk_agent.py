@@ -20,7 +20,7 @@ import threading
 from datetime import datetime, timedelta
 
 from utils import call_ai_api
-from e import fetch_all_issues, stream_ai_to_queue, format_portfolio_data, stream_portfolio_analysis
+from e import fetch_all_issues, stream_ai_to_queue, format_portfolio_data, stream_portfolio_analysis, generate_sse_message, _log
 from langchain_components import ContextMemory
 
 
@@ -845,14 +845,100 @@ class RiskAnalysisAgent:
         return True
 
     def fetch_data(self):
-        """Step 3: Fetch Jira data using existing infrastructure"""
-        max_fetch = 2000
+        """Step 3: Fetch ALL Jira data (no artificial limit)"""
         if self.jql_all:
-            self.issues_all = fetch_all_issues(self.jql_all, max_fetch=max_fetch)
+            self.issues_all = fetch_all_issues(self.jql_all)
         if self.jql_unresolved:
-            self.issues_unresolved = fetch_all_issues(self.jql_unresolved, max_fetch=max_fetch)
+            self.issues_unresolved = fetch_all_issues(self.jql_unresolved)
         if not self.jql_all:
             self.issues_all = self.issues_unresolved
+
+        total = len(self.issues_all) if self.issues_all else 0
+        _log("info", f"全量获取完成: 共 {total} 条问题")
+        self._large_dataset = total > 3000
+
+    def _batch_analyze(self, issues, enhanced_query, sse_queue, system_prompt):
+        """
+        分批分析大规模数据（>500条）。
+        将问题排序后分多批，每批单独AI分析，最后汇总。
+
+        Returns:
+            str: 最终综合分析报告
+        """
+        BATCH_SIZE = 2000
+        total = len(issues)
+        total_batches = max(1, (total + BATCH_SIZE - 1) // BATCH_SIZE)
+
+        sse_queue.put(('thinking', f'📊 数据量较大（共{total}条），将分{total_batches}批进行分析... '))
+
+        priority_sorted = sorted(
+            issues,
+            key=lambda x: {
+                "Block": 0, "阻塞": 0, " blocker": 0,
+                "Critical": 1, "紧急": 1, " critical": 1,
+                "High": 2, "高": 2, "Major": 2, " major": 2,
+            }.get(x.get('fields', {}).get('priority', {}).get('name', '').lower(), 99)
+        )
+
+        batch_summaries = []
+        for batch_idx in range(0, total, BATCH_SIZE):
+            batch = priority_sorted[batch_idx:batch_idx + BATCH_SIZE]
+            batch_num = batch_idx // BATCH_SIZE + 1
+
+            sse_queue.put(('thinking', f'⏳ 正在分析第 {batch_num}/{total_batches} 批（{len(batch)} 条）... '))
+
+            jira_data = format_portfolio_data(
+                batch,
+                max_block=200,
+                max_critical=150,
+                max_high=100
+            )
+
+            batch_prompt = (
+                f"用户问题：{enhanced_query}\n\n"
+                f"### 第{batch_num}/{total_batches}批数据\n"
+                f"这是全部{total}条数据中的一部分（第{batch_idx+1}-{min(batch_idx+BATCH_SIZE, total)}条），"
+                f"请分析这一批中的风险问题、分布特征和异常模式。\n\n"
+                f"真实Jira数据：{jira_data}"
+            )
+
+            batch_system = (
+                "你是一个Jira风险分析助手。这是整体数据中的一批，请分析：\n"
+                "1. 这批数据中的主要风险问题（Block/Critical/High）\n"
+                "2. 批次内的分布特征\n"
+                "3. 突出的异常点\n"
+                "输出要简洁，只输出分析结果本身，不输出统计列表。"
+            )
+
+            content = stream_ai_to_queue(
+                messages=[{"role": "user", "content": batch_prompt}],
+                system_prompt=batch_system,
+                sse_queue=sse_queue,
+                max_tokens=4096
+            )
+            batch_summaries.append(content or "")
+
+        # ── 汇总所有批次分析 ──
+        sse_queue.put(('thinking', f'🔄 正在汇总 {total_batches} 批分析结果... '))
+
+        summary_text = ""
+        for i, s in enumerate(batch_summaries):
+            clean = s[-2000:] if len(s) > 2000 else s
+            summary_text += f"\n--- 第{i+1}批分析 ---\n{clean}\n"
+        merge_prompt = (
+            f"用户问题：{enhanced_query}\n\n"
+            f"全部{total}条数据已分{total_batches}批分析完毕，以下是各批分析结果：\n\n"
+            f"{summary_text}\n\n"
+            f"请根据以上各批分析，生成一份完整的综合风险评估报告。"
+        )
+
+        full_content = stream_ai_to_queue(
+            messages=[{"role": "user", "content": merge_prompt}],
+            system_prompt=system_prompt,
+            sse_queue=sse_queue,
+            max_tokens=16384
+        )
+        return full_content
 
     def stream_analysis(self, sse_queue, user_query, conversation_history=None):
         """Step 4: Stream AI analysis using existing infrastructure"""
@@ -882,8 +968,16 @@ class RiskAnalysisAgent:
             )
             return full_content
 
+        issues = self.issues_unresolved or []
+        total = len(issues)
+
+        # 超大数据集（>3000条）→ 分批分析
+        if total > 3000:
+            return self._batch_analyze(issues, enhanced_query, sse_queue, system_prompt)
+
+        # 常规数据集 → 一次性分析
         priority_sorted = sorted(
-            self.issues_unresolved,
+            issues,
             key=lambda x: {
                 "Block": 0, "阻塞": 0, " blocker": 0,
                 "Critical": 1, "紧急": 1, " critical": 1,
