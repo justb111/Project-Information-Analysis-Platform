@@ -177,6 +177,9 @@ class ContextMemory:
         self.chat_history = []
         self.k = k
         self._last_intent_raw = None
+        # ── 澄清状态 ──
+        self._clarification = None   # 待处理的澄清信息
+        self._clarification_ts = None  # 时间戳
 
     # ---- 序列化 ----
 
@@ -188,6 +191,7 @@ class ContextMemory:
             "last_result_summary": self.last_result_summary,
             "user_preferences": self.user_preferences,
             "chat_history": self.chat_history[-self.k:] if self.chat_history else [],
+            "clarification": self._clarification,
         }
 
     @classmethod
@@ -200,6 +204,9 @@ class ContextMemory:
             mem.last_result_summary = data.get("last_result_summary")
             mem.user_preferences = data.get("user_preferences", {})
             mem.chat_history = data.get("chat_history", [])
+            mem._clarification = data.get("clarification")
+            if mem._clarification:
+                mem._clarification_ts = datetime.now()
         return mem
 
     # ---- 记忆更新 ----
@@ -220,8 +227,53 @@ class ContextMemory:
         self.project_name = None
         self.query_type = None
         self.last_result_summary = None
+        self._clarification = None
+        self._clarification_ts = None
         # 不清除 chat_history，保留对话上下文用于引用
         # 但清除项目相关的记忆
+
+    # ---- 澄清状态管理 ----
+
+    def set_clarification(self, reason: str, options: list):
+        """存储待处理的澄清信息。
+
+        Args:
+            reason: 需要澄清的原因描述
+            options: 选项列表，每个元素为 {"id": str, "label": str, "type": str}
+        """
+        self._clarification = {
+            "reason": reason,
+            "options": options,
+            "created_at": datetime.now().isoformat(),
+        }
+        self._clarification_ts = datetime.now()
+
+    def get_clarification(self) -> dict:
+        """获取待处理的澄清信息。超过5分钟未处理则自动清除"""
+        if not self._clarification:
+            return None
+        if self._clarification_ts:
+            elapsed = (datetime.now() - self._clarification_ts).total_seconds()
+            if elapsed > 300:  # 5分钟超时
+                self._clarification = None
+                self._clarification_ts = None
+                return None
+        return self._clarification
+
+    def resolve_clarification(self, choice_id: str) -> bool:
+        """处理用户的选择。匹配到选项则返回 True"""
+        if not self._clarification:
+            return False
+        for opt in self._clarification.get("options", []):
+            if opt["id"] == choice_id:
+                self._clarification = None
+                self._clarification_ts = None
+                return True
+        return False
+
+    def has_pending_clarification(self) -> bool:
+        """是否有未处理的澄清"""
+        return self.get_clarification() is not None
 
     # ---- 代词解析 ----
 

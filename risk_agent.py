@@ -45,6 +45,86 @@ def cleanup_kanban_page_data(token):
 
 
 # ---------------------------------------------------------------------------
+# 从 jql_templates.json 提取项目名，用于本地精确匹配路由
+# ---------------------------------------------------------------------------
+_PROJECT_INDEX = None
+_PROJECT_INDEX_LOCK = threading.Lock()
+
+# 明确表达JIRA分析意图的关键词（命中任一 → HIGH confidence）
+_ANALYSIS_KEYWORDS = [
+    '风险', '阻塞', 'bug', 'Bug', 'BUG', '分析', '问题', '缺陷',
+    '测试', '看板', 'kanban', '进度', '统计', '报告',
+    'MP Block', 'mp block', '未解决', '未关闭', '新增',
+    '解决', '关闭', '优先级', '测试建议', '质量',
+]
+
+def _load_project_index():
+    """从 jql_templates.json 加载所有项目名，构建本地索引。
+
+    项目名按长度降序排列（长名优先匹配），避免 tOS16 误匹配 tOS16.1。
+    """
+    global _PROJECT_INDEX
+    if _PROJECT_INDEX is not None:
+        return _PROJECT_INDEX
+
+    with _PROJECT_INDEX_LOCK:
+        if _PROJECT_INDEX is not None:
+            return _PROJECT_INDEX
+
+        template_file = os.path.join(os.path.dirname(__file__), 'jql_templates.json')
+        project_names = set()
+        try:
+            with open(template_file, 'r', encoding='utf-8-sig') as f:
+                data = json.load(f)
+            for tmpl in data.get("templates", []):
+                for proj_name in tmpl.get("projects", {}):
+                    if proj_name and proj_name not in ("所有项目", "整体项目"):
+                        project_names.add(proj_name)
+        except Exception:
+            pass
+
+        # 按长度降序，长名优先
+        _PROJECT_INDEX = sorted(project_names, key=lambda x: (-len(x), x))
+        return _PROJECT_INDEX
+
+
+def _detect_projects_in_query(query):
+    """在用户查询中检测已知项目名。
+
+    Returns:
+        list[str]: 匹配到的项目名列表（已去重，按在查询中出现顺序）
+    """
+    if not query:
+        return []
+
+    index = _load_project_index()
+    if not index:
+        return []
+
+    matched = []
+    matched_positions = set()
+
+    for proj_name in index:
+        # 在查询中查找项目名（全词匹配，不匹配子串的一部分）
+        for m in re.finditer(re.escape(proj_name), query):
+            pos = m.start()
+            # 避免同一位置被多个项目匹配（长名已优先排在前面）
+            if not any(abs(pos - p) < len(proj_name) for p in matched_positions):
+                matched.append(proj_name)
+                matched_positions.add(pos)
+                break  # 一个项目只匹配一次
+
+    return matched
+
+
+def _has_analysis_intent(query):
+    """检查查询中是否包含明确的分析类关键词"""
+    if not query:
+        return False
+    return any(kw in query for kw in _ANALYSIS_KEYWORDS)
+
+
+# ---------------------------------------------------------------------------
 # 从 jql_templates.json 精确查找项目映射（AI生成JQL时注入的事实依据）
 # ---------------------------------------------------------------------------
 def _get_project_mapping(project_name):
@@ -283,6 +363,9 @@ INTENT_PROMPT = """你是一个Jira风险分析系统的意图理解专家。请
 - "分析X6840的风险" → single_project
 - "X6840有什么阻塞问题" → single_project
 - "tOS16.3的阻塞问题" → single_project
+- "tOS16的项目风险" → portfolio（tOS16不带点号时泛指整个tOS16.x系列，属于项目风险分析）
+- "分析tOS16的风险" → portfolio（同上）
+- "tOS16的测试情况" → single_project
 - "所有在研项目的风险" → portfolio
 - "tOS16.1和tOS16.2的对比分析" → single_project
 - "X6898本周的bug情况" → single_project
@@ -297,7 +380,7 @@ INTENT_PROMPT = """你是一个Jira风险分析系统的意图理解专家。请
 3. 如果同时涉及两方面，优先按 single_project 处理
 
 ## 可用项目信息
-- tOS16.x 系列有三个独立Jira项目：tOS16.1、tOS16.2、tOS16.3（必须包含点号！不是 tOS16）
+- tOS16.x 系列有三个独立Jira项目：tOS16.1、tOS16.2、tOS16.3；用户说"tOS16"（不带点号）泛指整个tOS16.x系列，视为项目风险分析
 - X6840：涉及 X6840-tOS16、X6840-tOS16-Aee、tOS16.1 三个项目
 - 常见项目键格式：
   - X+4位数字：X6840、X6856、X6870、X6890、X6895、X6898
@@ -1332,113 +1415,130 @@ class RiskAnalysisAgent:
             logger.warning(f"知识库搜索失败: {e}")
             return None
 
-    def run(self, user_query, sse_queue, cancel_event, conversation_history=None):
-        """
-        Main entry point. Runs the full pipeline and puts SSE events into the queue.
-        
-        Args:
-            user_query: Raw user query string
-            sse_queue: Thread-safe queue for SSE events (tuple of event_type, data)
-            cancel_event: threading.Event for cancellation
-            conversation_history: Optional list of previous conversation turns
-        """
-        try:
-            # Step 1: Understand intent (with context memory)
-            sse_queue.put(('thinking', '🔍 正在解析查询意图...'))
-            self.understand_intent(user_query, conversation_history)
-            import logging
-            logging.warning(f"[Agent Debug] intent解析结果: {json.dumps(self.intent, ensure_ascii=False)}")
-            if cancel_event and cancel_event.is_set():
-                sse_queue.put(('done', '分析已取消'))
-                return
 
-            # 检查模糊查询 - 需要返回澄清信息
-            if self.intent.get("_is_vague"):
-                clarification = self.context_memory.get_clarification_question(user_query)
-                sse_queue.put(('answer', f'🤔 我需要确认一下：\n\n{clarification}'))
-                sse_queue.put(('done', '请求确认'))
-                return
+    def _handle_clarification_reply(self, user_query, sse_queue, cancel_event):
+        """处理用户对澄清问题的回复。匹配选项后执行对应操作。"""
+        pending = self.context_memory.get_clarification()
+        if not pending:
+            return False
 
-            # ── 使用 Function Calling 让 LLM 决定：搜索知识库还是走 Jira 分析 ──
-            if self.intent.get("query_type") == "general_question" or not self.intent.get("project"):
-                sse_queue.put(('thinking', '📚 正在分析是否需要搜索知识库...'))
-                self._handle_via_knowledge_tool(user_query, sse_queue, cancel_event)
-                return
+        # Check if user's input contains an option label or id
+        options = pending.get("options", [])
+        matched_option = None
+        for opt in options:
+            if opt["id"] in user_query or opt.get("label", "") in user_query:
+                matched_option = opt
+                break
 
-            # Step 2: Generate JQL
-            sse_queue.put(('thinking', '📊 正在基于AI理解生成JQL查询...'))
-            success = self.generate_jql()
-            if cancel_event and cancel_event.is_set():
-                sse_queue.put(('done', '分析已取消'))
-                return
+        if not matched_option:
+            # User didn't match any option — clear clarification and treat as new query
+            self.context_memory.resolve_clarification("")
+            return False
 
-            if not success:
-                sse_queue.put(('error', 'JQL生成失败，请重试'))
-                return
+        # Resolve the clarification in memory
+        self.context_memory.resolve_clarification(matched_option["id"])
 
-            if self.jql_all:
-                sse_queue.put(('jql', f"📋 生成的JQL（全量）: {self.jql_all}"))
-            sse_queue.put(('jql', f"📋 生成的JQL（未解决）: {self.jql_unresolved}"))
+        # Execute based on option type
+        opt_type = matched_option.get("type", "jira")
+        if opt_type == "jira":
+            project_name = matched_option.get("project", "")
+            sse_queue.put(('thinking', f'📊 开始分析项目「{project_name}」的风险...'))
+            self.intent = {
+                "project": project_name,
+                "time_range": None,
+                "query_type": "single_project",
+                "raw_query": user_query,
+                "_route": "clarification_choice",
+            }
+            self.context_memory.update_after_query(self.intent)
+            self._run_jira_pipeline(user_query, sse_queue, cancel_event, None)
+            return True
 
-            # Step 3: Fetch data
-            sse_queue.put(('thinking', '📡 正在从Jira获取数据...'))
-            self.fetch_data()
-            if cancel_event and cancel_event.is_set():
-                sse_queue.put(('done', '分析已取消'))
-                return
+        elif opt_type == "knowledge_base":
+            sse_queue.put(('thinking', '📚 搜索知识库...'))
+            self._handle_via_knowledge_tool(user_query, sse_queue, cancel_event)
+            return True
 
-            total_all = len(self.issues_all)
-            total_unresolved = len(self.issues_unresolved)
-            sse_queue.put(('thinking', f'📊 获取到 {total_all} 条问题（未解决 {total_unresolved} 条）'))
-            sse_queue.put(('data', json.dumps({
-                "total": total_all,
-                "unresolved": total_unresolved,
-                "project": self.intent.get("project"),
-                "time_range": self.intent.get("time_range")
-            }, ensure_ascii=False)))
+        elif opt_type == "general":
+            sse_queue.put(('answer', matched_option.get("response", "好的，请继续。")))
+            sse_queue.put(('done', '回答完成'))
+            return True
 
-            if total_unresolved == 0:
-                answer_text = f'✅ 查询完成，共获取到 {total_all} 条问题，所有问题均已被解决，当前没有未解决的Bug。\n\n项目状态良好！'
-                sse_queue.put(('answer', answer_text))
-                # 生成看板数据（即使全部已解决也发送）
-                kanban_data = self._generate_kanban_data()
-                if kanban_data:
-                    sse_queue.put(('kanban_data', json.dumps(kanban_data, ensure_ascii=False)))
-                # 生成独立看板页面数据
-                try:
-                    page_issues = self._extract_kanban_page_data()
-                    token = str(uuid.uuid4())
-                    store_kanban_page_data(token, {
-                        "issues": page_issues,
-                        "project": self.intent.get("project", ""),
-                        "jql_all": self.jql_all,
-                        "jql_unresolved": self.jql_unresolved
-                    })
-                    sse_queue.put(('kanban_page_url', f'/kanban-page?token={token}'))
-                except Exception as e:
-                    logging.getLogger(__name__).warning(f"生成看板页面数据失败: {e}")
-                sse_queue.put(('done', '分析完成'))
-                self.context_memory.update_after_query(self.intent, answer_text)
-                return
+        return False
 
-            # Step 4: Stream AI analysis
-            sse_queue.put(('thinking', '🤖 专家正在深入分析数据...'))
-            self.last_analysis = self.stream_analysis(sse_queue, user_query, conversation_history)
-            if cancel_event and cancel_event.is_set():
-                sse_queue.put(('done', '分析已取消'))
-                return
+    def _ask_clarify_projects(self, matched_projects, user_query, sse_queue):
+        """检测到多个项目名时，向用户发送澄清选项。"""
+        options = []
+        for proj in matched_projects:
+            # Check if it maps to a JIRA project
+            options.append({
+                "id": f"project_{proj}",
+                "label": f"分析项目「{proj}」的风险",
+                "type": "jira",
+                "project": proj,
+            })
 
-            # 更新记忆（含分析摘要）
-            if self.last_analysis:
-                summary = self.last_analysis[:500]
-                self.context_memory.update_after_query(self.intent, summary)
+        # Also offer general chat option
+        options.append({
+            "id": "general_chat",
+            "label": "都不是，我想问其他问题",
+            "type": "general",
+            "response": "好的，请告诉我你想了解什么？",
+        })
 
-            # 生成看板数据并发送
+        # Build the clarify message
+        project_list = "、".join(matched_projects)
+        reason = f"检测到多个项目名：{project_list}。请选择你要分析的项目，或者选择「其他问题」。"
+
+        # Store clarification state
+        self.context_memory.set_clarification(reason, options)
+
+        # Send to frontend
+        sse_queue.put(('clarify', reason))
+        sse_queue.put(('clarify_options', options))
+        sse_queue.put(('answer', f'🤔 我检测到多个项目名（{project_list}），请告诉我你要分析哪个项目？'))
+        sse_queue.put(('done', '请求确认'))
+
+    def _run_jira_pipeline(self, user_query, sse_queue, cancel_event, conversation_history):
+        """Jira 分析流水线：生成JQL → 获取数据 → AI分析。从 run() 中提取的公共逻辑。"""
+        # Step 2: Generate JQL
+        sse_queue.put(('thinking', '📊 正在基于AI理解生成JQL查询...'))
+        success = self.generate_jql()
+        if cancel_event and cancel_event.is_set():
+            sse_queue.put(('done', '分析已取消'))
+            return
+
+        if not success:
+            sse_queue.put(('error', 'JQL生成失败，请重试'))
+            return
+
+        if self.jql_all:
+            sse_queue.put(('jql', f"📋 生成的JQL（全量）: {self.jql_all}"))
+        sse_queue.put(('jql', f"📋 生成的JQL（未解决）: {self.jql_unresolved}"))
+
+        # Step 3: Fetch data
+        sse_queue.put(('thinking', '📡 正在从Jira获取数据...'))
+        self.fetch_data()
+        if cancel_event and cancel_event.is_set():
+            sse_queue.put(('done', '分析已取消'))
+            return
+
+        total_all = len(self.issues_all)
+        total_unresolved = len(self.issues_unresolved)
+        sse_queue.put(('thinking', f'📊 获取到 {total_all} 条问题（未解决 {total_unresolved} 条）'))
+        sse_queue.put(('data', json.dumps({
+            "total": total_all,
+            "unresolved": total_unresolved,
+            "project": self.intent.get("project"),
+            "time_range": self.intent.get("time_range")
+        }, ensure_ascii=False)))
+
+        if total_unresolved == 0:
+            answer_text = f'✅ 查询完成，共获取到 {total_all} 条问题，所有问题均已被解决，当前没有未解决的Bug。\n\n项目状态良好！'
+            sse_queue.put(('answer', answer_text))
             kanban_data = self._generate_kanban_data()
             if kanban_data:
                 sse_queue.put(('kanban_data', json.dumps(kanban_data, ensure_ascii=False)))
-
-            # 生成独立看板页面数据
             try:
                 page_issues = self._extract_kanban_page_data()
                 token = str(uuid.uuid4())
@@ -1451,8 +1551,118 @@ class RiskAnalysisAgent:
                 sse_queue.put(('kanban_page_url', f'/kanban-page?token={token}'))
             except Exception as e:
                 logging.getLogger(__name__).warning(f"生成看板页面数据失败: {e}")
-
             sse_queue.put(('done', '分析完成'))
+            self.context_memory.update_after_query(self.intent, answer_text)
+            return
+
+        # Step 4: Stream AI analysis
+        sse_queue.put(('thinking', '🤖 专家正在深入分析数据...'))
+        self.last_analysis = self.stream_analysis(sse_queue, user_query, conversation_history)
+        if cancel_event and cancel_event.is_set():
+            sse_queue.put(('done', '分析已取消'))
+            return
+
+        if self.last_analysis:
+            summary = self.last_analysis[:500]
+            self.context_memory.update_after_query(self.intent, summary)
+
+        kanban_data = self._generate_kanban_data()
+        if kanban_data:
+            sse_queue.put(('kanban_data', json.dumps(kanban_data, ensure_ascii=False)))
+
+        try:
+            page_issues = self._extract_kanban_page_data()
+            token = str(uuid.uuid4())
+            store_kanban_page_data(token, {
+                "issues": page_issues,
+                "project": self.intent.get("project", ""),
+                "jql_all": self.jql_all,
+                "jql_unresolved": self.jql_unresolved
+            })
+            sse_queue.put(('kanban_page_url', f'/kanban-page?token={token}'))
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"生成看板页面数据失败: {e}")
+
+        sse_queue.put(('done', '分析完成'))
+
+
+    def run(self, user_query, sse_queue, cancel_event, conversation_history=None):
+        """
+        Main entry point. Runs the full pipeline and puts SSE events into the queue.
+
+        Args:
+            user_query: Raw user query string
+            sse_queue: Thread-safe queue for SSE events (tuple of event_type, data)
+            cancel_event: threading.Event for cancellation
+            conversation_history: Optional list of previous conversation turns
+        """
+        try:
+            if cancel_event and cancel_event.is_set():
+                sse_queue.put(('done', '分析已取消'))
+                return
+
+            # Step 0: Handle reply to a previous clarification
+            if self.context_memory.has_pending_clarification():
+                handled = self._handle_clarification_reply(user_query, sse_queue, cancel_event)
+                if handled:
+                    return
+
+            # Pre-routing: detect known project names in query
+            matched_projects = _detect_projects_in_query(user_query)
+            has_analysis_kw = _has_analysis_intent(user_query)
+
+            # Multiple projects found -> ask user to clarify
+            if len(matched_projects) > 1:
+                self._ask_clarify_projects(matched_projects, user_query, sse_queue)
+                return
+
+            # Single project + analysis keywords -> HIGH confidence, skip LLM intent guess
+            if len(matched_projects) == 1 and has_analysis_kw:
+                project_name = matched_projects[0]
+                sse_queue.put(('thinking', f'📊 检测到项目「{project_name}」，开始风险分析...'))
+                self.intent = {
+                    "project": project_name,
+                    "time_range": None,
+                    "query_type": "single_project",
+                    "raw_query": user_query,
+                    "_route": "project_detected",
+                }
+                self.context_memory.update_after_query(self.intent)
+                self._run_jira_pipeline(user_query, sse_queue, cancel_event, conversation_history)
+                return
+
+            # No match / single project without keywords -> use LLM via understand_intent
+            sse_queue.put(('thinking', '🔍 正在解析查询意图...'))
+            self.understand_intent(user_query, conversation_history)
+            import logging
+            logging.warning(f"[Agent Debug] intent解析结果: {json.dumps(self.intent, ensure_ascii=False)}")
+            if cancel_event and cancel_event.is_set():
+                sse_queue.put(('done', '分析已取消'))
+                return
+
+            # Check vague query
+            if self.intent.get("_is_vague"):
+                clarification = self.context_memory.get_clarification_question(user_query)
+                sse_queue.put(('answer', f'🤔 我需要确认一下：\n\n{clarification}'))
+                sse_queue.put(('done', '请求确认'))
+                return
+
+            # LLM routing decision
+            if self.intent.get("query_type") == "general_question" or not self.intent.get("project"):
+                # If we detected a project name, override LLM's wrong classification
+                if len(matched_projects) == 1:
+                    project_name = matched_projects[0]
+                    sse_queue.put(('thinking', f'📊 检测到项目「{project_name}」，按Jira风险分析处理...'))
+                    self.intent["project"] = project_name
+                    self.intent["query_type"] = "single_project"
+                    self.context_memory.update_after_query(self.intent)
+                else:
+                    sse_queue.put(('thinking', '📚 正在分析是否需要搜索知识库...'))
+                    self._handle_via_knowledge_tool(user_query, sse_queue, cancel_event)
+                    return
+
+            # Jira analysis pipeline
+            self._run_jira_pipeline(user_query, sse_queue, cancel_event, conversation_history)
 
         except Exception as e:
             import traceback
