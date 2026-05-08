@@ -1,0 +1,45 @@
+# 环境变量 / 密钥
+.env
+.env.example
+jira_credentials.json
+
+# Python 编译缓存
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 运行时数据 / 上传文件
+chroma_db/
+temp_delivery/
+temp_uploads/
+temp_workforce/
+uploads/
+ip_access.db
+knowledge.db
+
+# 日志
+*.log
+*.log.*
+server_*.txt
+
+# 备份文件
+*.backup
+jql_templates.json.backup
+
+# Node.js
+node_modules/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 测试文件 / 临时文件
+test_files/
+__pycache___/
