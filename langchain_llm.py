@@ -15,7 +15,7 @@ import httpx
 from utils import call_ai_api
 
 # 环境变量
-AI_API_KEY = os.getenv("AI_API_KEY", "sk_0f04e27baf7fd49de98314bc793b943e2514b72afaf9f67af8676a2")
+AI_API_KEY = os.getenv("AI_API_KEY")
 AI_MODEL = os.getenv("AI_MODEL", "gpt-5.4")
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://hk-intra-paas.transsion.com/tranai-proxy/v1")
 

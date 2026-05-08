@@ -19,8 +19,8 @@ class RiskAgent(BaseAgent):
         super().__init__(name="风险分析代理", system_prompt=system_prompt)
         
         # 从e.py加载配置
-        self.JIRA_USERNAME = os.getenv("JIRA_USERNAME", "fuchao.ao")
-        self.JIRA_PASSWORD = os.getenv("JIRA_PASSWORD", "200821Afc.")
+        self.JIRA_USERNAME = os.getenv("JIRA_USERNAME")
+        self.JIRA_PASSWORD = os.getenv("JIRA_PASSWORD")
         self.JIRA_URL = os.getenv("JIRA_URL", "http://jira.transsion.com")
         self.AI_MODEL = os.getenv("AI_MODEL", "gpt-5.4")
         

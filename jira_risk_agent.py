@@ -1,18 +1,29 @@
 import requests
 import json
 import base64
+import os
+from dotenv import load_dotenv
 import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)   # 新增：屏蔽 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+load_dotenv()
 
-# ========== 1. 配置 Jira 连接信息（自托管版） ==========
-JIRA_CONFIG = {'server': 'http://jira.transsion.com'}          # 你的公司 Jira 地址，不要以 / 结尾
-JIRA_USERNAME = "fuchao.ao"                 # 例如 "zhangsan"，不是邮箱
-JIRA_PASSWORD = "200821Afc."               # 直接使用登录密码
+# ========== 1. 配置 Jira 连接信息（请通过 .env 文件设置） ==========
+JIRA_CONFIG = {'server': os.getenv("JIRA_URL", "http://jira.transsion.com")}
+JIRA_USERNAME = os.getenv("JIRA_USERNAME")
+JIRA_PASSWORD = os.getenv("JIRA_PASSWORD")
 
-# ========== 2. 配置 AI 服务信息（以 OpenAI 为例） ==========
-AI_API_URL = "https://api.openai.com/v1/chat/completions"   # 如果你用国内大模型，替换这个 URL
-AI_API_KEY = "sk_0f04e27baf7fd49de98314bc793b943e2514b72afaf9f67af8676a2"                        # 你的 AI 服务的 API Key
+if not JIRA_USERNAME or not JIRA_PASSWORD:
+    print("❌ 错误: 请在 .env 文件中设置 JIRA_USERNAME 和 JIRA_PASSWORD")
+    exit(1)
+
+# ========== 2. 配置 AI 服务信息（请通过 .env 文件设置） ==========
+AI_API_URL = os.getenv("AI_BASE_URL", "https://api.openai.com/v1/chat/completions")
+AI_API_KEY = os.getenv("AI_API_KEY")
+
+if not AI_API_KEY:
+    print("❌ 错误: 请在 .env 文件中设置 AI_API_KEY")
+    exit(1)
 
 # ========== 3. 指定要分析的项目 ==========
 PROJECT_KEY = "X6840"   # 例如 "PROJ"，在 Jira 中项目的 key

@@ -7,7 +7,7 @@ import httpx
 from openai import OpenAI
 
 # 避免e.py中的模块级代码执行
-os.environ['AI_API_KEY'] = 'sk_0f04e27baf7fd49de98314bc793b943e2514b72afaf9f67af8676a2'
+# AI_API_KEY 请通过 .env 文件或环境变量设置
 os.environ['AI_MODEL'] = 'gpt-5.4'
 
 # 重定向命令行参数，避免argparse解析错误
@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # 初始化必要的客户端
 AI_BASE_URL = "https://hk-intra-paas.transsion.com/tranai-proxy/v1"
-AI_API_KEY = os.getenv("AI_API_KEY", "sk_0f04e27baf7fd49de98314bc793b943e2514b72afaf9f67af8676a2")
+AI_API_KEY = os.getenv("AI_API_KEY")
 X_USER_NO = os.getenv("X_USER_NO", "18654794")
 
 # 自定义httpx客户端

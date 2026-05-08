@@ -1797,8 +1797,8 @@ def analyze_batch_issues(batch_jql, batch_id, tos_version, projects, intent, tim
 
 # ========== 1. 配置 Jira 连接信息（自托管版） ==========
 JIRA_CONFIG = {'server': 'http://jira.transsion.com'}
-JIRA_USERNAME = os.getenv("JIRA_USERNAME", "fuchao.ao")
-JIRA_PASSWORD = os.getenv("JIRA_PASSWORD", "200821Afc..")
+JIRA_USERNAME = os.getenv("JIRA_USERNAME")
+JIRA_PASSWORD = os.getenv("JIRA_PASSWORD")
 JIRA_URL = os.getenv("JIRA_URL", JIRA_CONFIG["server"])
 _log("info", f"Jira配置: URL={JIRA_URL}, 用户={JIRA_USERNAME}, 密码={'已设置' if JIRA_PASSWORD else '未设置'}")
 
@@ -1807,7 +1807,7 @@ _log("info", f"Jira配置: URL={JIRA_URL}, 用户={JIRA_USERNAME}, 密码={'已�
 AI_BASE_URL = "https://hk-intra-paas.transsion.com/tranai-proxy/v1"
 
 # AI配置 - 必须通过环境变量设置
-AI_API_KEY = os.getenv("AI_API_KEY", "sk_0f04e27baf7fd49de98314bc793b943e2514b72afaf9f67af8676a2")
+AI_API_KEY = os.getenv("AI_API_KEY")
 AI_MODEL = os.getenv("AI_MODEL", "gpt-5.4")
 
 # 供代理鉴权的头信息 - 必须通过环境变量设置
