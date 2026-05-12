@@ -1622,11 +1622,17 @@ def progress_upload():
     try:
         # 优先使用标准解析器（数据更完整：泳道映射、偏差计算、任务统计）
         try:
+            _log("info", f"开始使用标准解析器解析: {tmp_path}")
             data = parse_progress_excel(tmp_path)
-        except Exception:
+            _log("info", f"标准解析成功: {data['summary'].get('total_projects', 0)} 个项目")
+        except Exception as e:
+            _log("warn", f"标准解析失败: {e}，尝试智能解析")
+            import traceback
+            _log("warn", f"标准解析详细错误: {traceback.format_exc()}")
             data = analyze_with_intelligence(tmp_path)
             if data is None:
                 raise
+            _log("info", f"智能解析成功: {data['summary'].get('total_projects', 0)} 个项目")
         column_info = {}
         if "_column_mapping" in data:
             column_info = {"mapping": data.pop("_column_mapping", {}), "detected": data.pop("_columns_detected", [])}
@@ -1648,6 +1654,55 @@ def progress_data(session_id):
     return jsonify({"success": True, "data": entry["data"]})
 
 
+@app.route('/api/progress/debug/<session_id>', methods=['GET'])
+def progress_debug(session_id):
+    """调试端点：返回缓存的原始数据，方便排查进度值异常"""
+    with progress_cache_lock:
+        entry = progress_cache.get(session_id)
+    if not entry:
+        return jsonify({"success": False, "error": "session_id 无效或已过期"}), 404
+    data = entry["data"]
+    dbg = {
+        "summary": data.get("summary", {}),
+        "project_progress_sample": [],
+        "project_tree_preview": {},
+        "column_info": entry.get("column_info", {}),
+        "total_project_progress_entries": len(data.get("project_progress", [])),
+        "total_project_tree_keys": len(data.get("project_tree", {}))
+    }
+    for i, p in enumerate(data.get("project_progress", [])[:10]):
+        dbg["project_progress_sample"].append({
+            "project": p.get("project", ""),
+            "progress": p.get("progress", 0),
+            "deviation": p.get("deviation", 0),
+            "risk": p.get("risk", ""),
+            "parent_project": p.get("parent_project", ""),
+            "deadline": p.get("deadline", ""),
+            "tasks_count": p.get("tasks_count", 0),
+            "planned": p.get("planned", 0),
+            "executed": p.get("executed", 0)
+        })
+    pt = data.get("project_tree", {})
+    count = 0
+    for parent_name, tree in pt.items():
+        if count >= 5:
+            break
+        subs = []
+        for sp in tree.get("sub_projects", [])[:5]:
+            subs.append({
+                "name": sp.get("name", ""),
+                "progress": sp.get("progress", 0),
+                "deviation": sp.get("deviation", 0),
+                "risk": sp.get("risk", "")
+            })
+        dbg["project_tree_preview"][parent_name] = {
+            "sub_count": len(tree.get("sub_projects", [])),
+            "sample_subs": subs
+        }
+        count += 1
+    return jsonify({"success": True, "debug": dbg})
+
+
 @app.route('/api/progress/analyze/<session_id>', methods=['GET'])
 def progress_analyze(session_id):
     with progress_cache_lock:
@@ -1661,20 +1716,34 @@ def progress_analyze(session_id):
         from excel_parser import build_ai_prompt
         prompt = build_ai_prompt(data)
     except ImportError:
+        project_tree = data.get("project_tree", {})
+        all_tasks = []
+        for parent_name, tree in project_tree.items():
+            for sp in tree.get("sub_projects", []):
+                all_tasks.append(sp)
+
+        if not all_tasks:
+            for p in data.get("project_progress", []):
+                all_tasks.append(p)
+
         proj_rows = []
-        for p in data.get("project_progress", []):
-            phase = p.get("phase", p.get("lane", "?"))
+        for p in all_tasks:
+            name = p.get("name", p.get("project", "?"))
+            phase = p.get("stage", p.get("phase", p.get("lane", "?")))
             prog = p.get("progress", 0)
-            test_prog = p.get("test_progress", prog)
             dev = p.get("deviation", 0)
             risk = p.get("risk", "normal")
-            effort_planned = p.get("effort_planned", 0)
-            effort_remaining = p.get("effort_remaining", 0)
+            if risk == "high":
+                risk_text = "高风险"
+            elif risk == "warning":
+                risk_text = "预警"
+            else:
+                risk_text = "正常"
+            dpm = p.get("dpm", p.get("manager", ""))
+            deadline = p.get("deadline", "")
             dev_txt = f"滞后{dev}%" if dev >= 0 else f"超前{abs(dev)}%"
-            effort_txt = f"预估{effort_planned}人天/剩余{effort_remaining}人天" if effort_planned > 0 else "-"
-            proj_rows.append(f"{p['project']} | {phase} | {prog}% | {test_prog}% | {dev_txt} | {effort_txt} | {risk}")
+            proj_rows.append(f"{name} | {phase} | {prog}% | {dev_txt} | {dpm} | {deadline} | {risk_text}")
         proj_table = "\n".join(proj_rows)
-        # 人力需求汇总
         rem_all = data.get("remaining_effort_all", [])
         total_planned = sum(d.get("planned", 0) for d in rem_all)
         total_remaining = sum(d.get("remaining", 0) for d in rem_all)
@@ -1684,17 +1753,17 @@ def progress_analyze(session_id):
             dpm_lines.append(f"  - {d['dpm']}: 预估{d.get('planned',0)}人天, 剩余{d.get('remaining',0)}人天, 完成率{d.get('completion_rate',0)}%, {d.get('project_count',0)}个项目")
         dpm_table = "\n".join(dpm_lines) if dpm_lines else "无"
         prompt = (
-            f"项目进度风险分析数据：\n"
-            f"共{summary['total_projects']}个项目，"
+            f"项目进度风险分析数据（执行进度偏差 = 应完成时间进度 - 实际执行进度，正数=滞后，负数=超前）：\n"
+            f"共{summary['total_projects']}个项目，{len(all_tasks)}个独立任务。"
             f"正常{summary['normal']}个、预警{summary['warning']}个、高风险{summary['high_risk']}个。"
             f"团队共{summary['team_size']}个负责人。\n"
             f"总计预估{total_planned}人天, 剩余{total_remaining}人天, 整体完成率{overall_rate}%。\n\n"
             f"【人力需求详情（按DPM负责人排序）】\n{dpm_table}\n\n"
-            f"【各项目数据】\n"
-            f"项目名 | 当前阶段 | 整体时间进度(%) | 整体测试进度(%) | 偏差情况 | 预估/剩余人力 | 风险\n{proj_table}\n\n"
-            f"请生成一份风险分析报告，必须包含一个 Markdown 表格，表头严格按照以下顺序和名称：\n"
-            f"| 项目完整名 | 当前阶段 | 整体时间进度(%) | 整体测试进度(%) | 测试进度与时间进度偏差情况 | 人力预估/剩余情况 | 当前风险点与总体判断 |\n\n"
-            f"要求：偏差用\"超前XX%\"或\"滞后XX%\"表示；风险点用简短文字描述，每个判断一句话，不要重复描述数据和项目名；最后补充核心风险总结和改进建议。"
+            f"【各任务数据（每行一个独立任务，未按项目聚合）】\n"
+            f"任务名 | 当前阶段 | 执行进度(%) | 执行进度偏差(%) | 负责人 | 截止日期 | 风险等级\n{proj_table}\n\n"
+            f"请生成一份风险分析报告，必须包含一个 Markdown 表格，表头严格按照以下顺序和名称（共7列，与输入数据列一一对应）：\n"
+            f"| 任务名 | 当前阶段 | 执行进度(%) | 执行进度偏差(%) | 负责人 | 截止日期 | 当前风险点与总体判断 |\n\n"
+            f"要求：正偏差=滞后XX%（执行慢于时间计划），负偏差=超前XX%（执行快于时间计划）；风险点用简短文字描述，每个判断一句话，不要重复描述数据和项目名；最后补充核心风险总结和改进建议。"
         )
 
     chat_messages = [
@@ -1702,9 +1771,11 @@ def progress_analyze(session_id):
         {"role": "user", "content": prompt}
     ]
 
+    filepath_to_cleanup = entry.get("filepath", "") if entry else ""
+
     def generate():
         try:
-            ai_response = call_ai_api(chat_messages, stream=True, temperature=0.3, max_tokens=4096)
+            ai_response = call_ai_api(chat_messages, stream=True, temperature=0.3, max_tokens=4096, timeout=180)
             if ai_response is None:
                 yield generate_sse_message('error', 'AI服务调用失败，请稍后重试')
                 return
@@ -1733,11 +1804,9 @@ def progress_analyze(session_id):
         except Exception as e:
             yield generate_sse_message('error', f'AI分析异常: {str(e)}')
         finally:
-            with progress_cache_lock:
-                entry = progress_cache.get(session_id)
-            if entry and os.path.exists(entry["filepath"]):
+            if filepath_to_cleanup and os.path.exists(filepath_to_cleanup):
                 try:
-                    os.remove(entry["filepath"])
+                    os.remove(filepath_to_cleanup)
                 except Exception:
                     pass
 
@@ -1759,22 +1828,44 @@ def progress_export(session_id):
     try:
         import pandas as pd
         output = io.BytesIO()
-        projects = data.get("project_progress", [])
-        if projects:
+        # 优先使用 task_progress（独立任务级），回退到 project_progress（聚合级）
+        tasks = data.get("task_progress")
+        if tasks:
             df = pd.DataFrame([{
-                "项目": p["project"],
-                "阶段": p.get("phase", ""),
-                "进度(%)": p["progress"],
-                "偏差(%)": p["deviation"],
-                "风险等级": p.get("risk_label", ""),
-                "负责人": p.get("manager", ""),
-                "计划用例": p["planned"],
-                "已执行": p["executed"],
-                "任务数": p.get("tasks_count", 0)
-            } for p in projects])
-            df.to_excel(output, index=False, sheet_name="项目进度风险看板", engine='openpyxl')
+                "任务名称": t.get("name", ""),
+                "父级项目": t.get("parent_project", ""),
+                "阶段": t.get("phase", ""),
+                "泳道": t.get("lane", ""),
+                "执行进度(%)": t.get("progress", 0),
+                "进度偏差(%)": t.get("deviation", 0),
+                "风险等级": "高风险" if t.get("risk") == "high" else ("预警" if t.get("risk") == "warning" else "正常"),
+                "负责人": t.get("dpm", ""),
+                "计划名称": t.get("plan_name", ""),
+                "截止日期": t.get("deadline", ""),
+                "开始日期": t.get("start_date", ""),
+                "计划用例": t.get("planned", 0),
+                "已执行用例": t.get("executed", 0),
+                "预估人力": t.get("effort_planned", 0),
+                "剩余人力": t.get("effort_remaining", 0)
+            } for t in tasks])
+            df.to_excel(output, index=False, sheet_name="任务级进度明细", engine='openpyxl')
         else:
-            pd.DataFrame().to_excel(output, index=False, sheet_name="项目进度风险看板", engine='openpyxl')
+            projects = data.get("project_progress", [])
+            if projects:
+                df = pd.DataFrame([{
+                    "项目": p["project"],
+                    "阶段": p.get("phase", ""),
+                    "进度(%)": p["progress"],
+                    "偏差(%)": p["deviation"],
+                    "风险等级": p.get("risk_label", ""),
+                    "负责人": p.get("manager", ""),
+                    "计划用例": p["planned"],
+                    "已执行": p["executed"],
+                    "任务数": p.get("tasks_count", 0)
+                } for p in projects])
+                df.to_excel(output, index=False, sheet_name="项目进度风险看板", engine='openpyxl')
+            else:
+                pd.DataFrame().to_excel(output, index=False, sheet_name="数据", engine='openpyxl')
         output.seek(0)
         return Response(
             output.getvalue(),

@@ -20,6 +20,7 @@ import threading
 from datetime import datetime, timedelta
 
 from utils import call_ai_api
+from domain_mapping import lookup_domain
 from e import fetch_all_issues, stream_ai_to_queue, format_portfolio_data, stream_portfolio_analysis, generate_sse_message, _log
 from langchain_components import ContextMemory
 
@@ -145,8 +146,13 @@ def _get_project_mapping(project_name):
     for tmpl in data.get("templates", []):
         for proj_name, proj_jql in tmpl.get("projects", {}).items():
             if proj_name in names and proj_name not in [f[0] for f in found]:
-                # 去除模板特有的过滤条件，只保留project子句
-                clean = re.split(r'\s+AND\s+(?:type|reporter|createdDate|creator)\b', proj_jql, maxsplit=1)[0]
+                # 只去除 summary ~ XXX 和日期限制（AI会按需添加），保留 type / creator / ORDER BY 等
+                clean = re.sub(r'\s+AND\s+summary\s*~\s*"[^"]*"\s*', ' ', proj_jql, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+summary\s*~\s*\S+\s*', ' ', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+createdDate\s*[><=]+\s*\S+\s+AND\s+createdDate\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+created\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+createdDate\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s{2,}', ' ', clean).strip()
                 found.append((proj_name, clean))
 
     if not found:
@@ -194,7 +200,13 @@ def _get_project_jql_clause(project_name):
         for proj_name, proj_jql in tmpl.get("projects", {}).items():
             if proj_name in names and proj_name not in seen:
                 seen.add(proj_name)
-                clean = re.split(r'\s+AND\s+(?:type|reporter|createdDate|creator)\b', proj_jql, maxsplit=1)[0]
+                # 只去除 summary ~ XXX 和模板自带的日期限制（AI会按需添加），保留 type / creator / ORDER BY 等
+                clean = re.sub(r'\s+AND\s+summary\s*~\s*"[^"]*"\s*', ' ', proj_jql, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+summary\s*~\s*\S+\s*', ' ', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+createdDate\s*[><=]+\s*\S+\s+AND\s+createdDate\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+created\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+createdDate\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s{2,}', ' ', clean).strip()
                 found.append(clean)
     if not found:
         return None
@@ -237,16 +249,68 @@ def _strip_project_clause(jql):
 def _strip_risk_label(jql):
     """去掉 LLM 错误生成的 labels = "风险" 条件"""
     import re
-    # labels = "风险" AND ...
     jql = re.sub(r'labels\s*=\s*"[^"]*风险[^"]*"\s*AND\s+', '', jql, flags=re.IGNORECASE)
-    # AND labels = "风险"
     jql = re.sub(r'\s+AND\s+labels\s*=\s*"[^"]*风险[^"]*"', '', jql, flags=re.IGNORECASE)
-    # standalone labels = "风险" anywhere
     jql = re.sub(r'labels\s*=\s*"[^"]*风险[^"]*"\s*', '', jql, flags=re.IGNORECASE)
     jql = re.sub(r'^\s*AND\s+', '', jql)
     jql = re.sub(r'\s+AND\s*$', '', jql)
-    jql = re.sub(r'\s{2,}', ' ', jql)  # 清理多餘空格
+    jql = re.sub(r'\s{2,}', ' ', jql)
     return jql.strip()
+
+
+def _strip_summary_clause(jql, project_name):
+    """去掉 LLM 添加的 summary ~ \"项目名\" 条件（项目已由模板子句覆盖）"""
+    if not project_name:
+        return jql
+    # summary ~ "X6840" / summary ~ X6840 (无引号) 等
+    jql = re.sub(r'\bsummary\s*~\s*"\s*' + re.escape(project_name) + r'\s*"\s*AND\s+', '', jql, flags=re.IGNORECASE)
+    jql = re.sub(r'\bsummary\s*~\s*' + re.escape(project_name) + r'\s*AND\s+', '', jql, flags=re.IGNORECASE)
+    jql = re.sub(r'\s+AND\s+summary\s*~\s*"\s*' + re.escape(project_name) + r'\s*"', '', jql, flags=re.IGNORECASE)
+    jql = re.sub(r'\s+AND\s+summary\s*~\s*' + re.escape(project_name) + r'\s*$', '', jql, flags=re.IGNORECASE)
+    jql = re.sub(r'^\s*AND\s+', '', jql)
+    jql = re.sub(r'\s+AND\s*$', '', jql)
+    jql = re.sub(r'\s{2,}', ' ', jql)
+    return jql.strip()
+
+
+def _parse_time_condition(query):
+    """从用户查询中提取时间过滤条件的 JQL 片段（规则降级用，不依赖 AI）"""
+    if not query:
+        return ""
+    if re.search(r'本月|这个月', query):
+        return "created >= startOfMonth()"
+    if re.search(r'本周|这周', query):
+        return "created >= startOfWeek()"
+    if re.search(r'今日|今天', query):
+        return "created >= startOfDay()"
+    m = re.search(r'最近\s*(\d+)\s*天', query)
+    if m:
+        return f"created >= -{m.group(1)}d"
+    m = re.search(r'近\s*(\d+)\s*天', query)
+    if m:
+        return f"created >= -{m.group(1)}d"
+    if re.search(r'昨天|昨日', query):
+        return "created >= -1d AND created < startOfDay()"
+    if re.search(r'上周|上星期', query):
+        return "created >= startOfWeek(-1w) AND created < startOfWeek()"
+    if re.search(r'上个月|上月', query):
+        return "created >= startOfMonth(-1M) AND created < startOfMonth()"
+    return ""
+
+
+def _generate_jql_fallback(project_name, template_clause, raw_query):
+    """AI 不可用时，用规则解析生成 JQL"""
+    jql_parts = []
+    if template_clause:
+        jql_parts.append(template_clause)
+    elif project_name and project_name != "ALL":
+        jql_parts.append(f'project = "{project_name}"')
+    time_cond = _parse_time_condition(raw_query)
+    if time_cond:
+        jql_parts.append(time_cond)
+    if not jql_parts:
+        return ""
+    return " AND ".join(jql_parts)
 
 
 # ── 过滤条件专用 Prompt（有模板时） ──
@@ -467,127 +531,165 @@ JQL_PROMPT = """你是一个JQL (Jira Query Language) 专家。你的任务是�
 - "最近N天"、"近N天" → AND created >= -Nd
 - "YYYY-MM-DD~YYYY-MM-DD"、"X月X号到X月X号" → AND created >= 'YYYY-MM-DD' AND created <= 'YYYY-MM-DD'
 
+### Bug摘要格式识别知识（辅助JQL生成）
+Jira中的Bug摘要通常遵循以下模板格式：
+**【部门】【项目】【阶段】【模块】问题描述**
+例如：【驱动组】【CN6】【SDV】【Camera】预览画面黑屏
+
+其中：
+- 【部门】= 负责团队（驱动组、系统组、测试组、算法组、硬件组等）
+- 【项目】= 项目代号（CN6、X6898、LK7、X6840等）
+- 【阶段】= 项目阶段（SDV、SIT、QTR、PVT、EVT、DVT等）
+- 【模块】= 功能模块（Camera、Display、Audio等）
+
+当用户按"模块"查询时，通常对应摘要中的【模块】部分或Jira Component字段。
+当用户按"阶段"查询时，通常对应摘要中的【阶段】部分（如SDV、SIT等）。
+
+### Must_Resolve字段知识
+- Jira中通过 customfield_10000（Must_Resolve）标记是否为必解问题
+- "MP Block" = 最高优先级必须解决的问题
+- "Not MP Block" = 非必须解决
+- 用户说"必解"、"MP Block"、"必须解决"时，对应 cf[10000] = "MP Block"
+
 ### JQL 书写规范
 - project 条件：多个项目用 OR 连接
 - project 值使用双引号
 - 排序：除非用户要求，默认不加 ORDER BY
 
-## 解决率/关闭率查询的特殊规则
+## 解决率/关闭率查询的说明
 当用户在 raw_query 中问"解决率"、"关闭率"、"解决情况"、"关闭情况"时：
-- **必须使用 ALL 模式**（需要全量数据才能计算解决率）
-- 生成两个JQL：全量JQL + 已解决的JQL（resolution is not EMPTY）
-- UNRESOLVED 的JQL不加 resolution 条件
+系统始终全量获取数据，AI会根据全量数据自动计算解决率和关闭情况，无需额外JQL条件。
 
 ## 多条件组合示例
 如果 raw_query 中包含多个条件，用 AND 连接：
-- "tOS16.3 未解决的 bug 中，优先级为 Blocker 且包含'音频'关键词的" 
-  → project = "tOS16.3" AND resolution = Unresolved AND priority = Blocker AND summary ~ "音频"
-- "X6840 本周新增的、由交付测试部提交的、尚未分配的 bug"
-  → (project映射) AND created >= startOfWeek() AND reporter in membersOf("RT_交付测试部") AND assignee = null AND resolution = Unresolved
+- "tOS16.3 优先级为 Blocker 且包含'音频'关键词的 bug"
+  → project = "tOS16.3" AND priority = Blocker AND summary ~ "音频"
 
 ## 处理"建议"类查询的规则
 如果 raw_query 中包含"建议"、"推荐"等词，且明确提到了项目名（如 CN6c、X6840 等），你必须先生成JQL获取该项目的数据，然后根据数据提供建议。不要因为出现了"建议"就直接当作一般问题跳过JQL生成。
 
-请输出两行：
-第一行：ALL（全量数据） 或 UNRESOLVED（仅未解决）
-第二行：可直接执行的JQL语句"""
+请输出可直接执行的JQL语句。系统始终获取全量数据，AI后续会根据用户意图从全量数据中筛选和分析，所以你的JQL只需要反映用户明确的过滤条件（如项目、时间、优先级等），不需要加 resolution 条件。"""
 
-ANALYSIS_SYSTEM_PROMPT = """你是Jira风险分析助手，专门帮助分析项目风险、Bug趋势和共性问题。
+ANALYSIS_SYSTEM_PROMPT = """你是一位资深项目质量经理（Project Quality Manager），负责对单一项目进行专业的风险评估和质量分析。你的报告风格严谨、结构化，直接服务于项目决策。
 
-你的能力包括：
-1. 分析特定项目（如X6840）的风险状况
-2. 分析跨项目的共性问题
-3. 提供专业的风险分析和建议
+## ⚠️ 数据使用规则
+1. **全量数据**：你收到的是该项目的完整全量数据（包含已解决和未解决），所有统计指标必须基于全量数据
+2. **风险聚焦未解决**：风险判断和风险结论只聚焦于未解决的问题。已解决/已关闭的问题只用于计算质量指标
+3. **严禁使用"样本"、"抽样"、"前N个"等暗示数据不完整的表述**
 
-请根据用户的问题类型提供相应的分析：
-- 如果用户询问特定项目，先说明查询的项目范围和数据概况，然后分析风险
-- 如果用户询问所有在研项目，分析跨项目的共性问题
-- 如果是一般问题，直接回答
+## 🔥 风险判断依据（重要性排序）
+1. **Must_Resolve=MP Block**（🚫MP标记）：必须解决的最高优先级问题，最核心风险指标
+2. **标签=阻塞测试**（🧱阻塞标记）：阻塞测试流程的直接证据
+3. **Priority等级**：仅作为辅助参考。Priority=Blocker不等于阻塞测试
 
-## 回答规范（重要！）
-1. **必须给出确定性结论**：回答必须基于数据或知识库给出明确的结论，使用"有X个阻塞问题"、"解决率为XX%"等具体的、肯定的表述。
-2. **禁止使用模糊词汇**：不得使用"可能"、"好像"、"或许"、"大概"、"无法确定"、"我不确定"等不确定的表述。
-3. **信息不足时明确说明**：如果数据不足以做出判断，直接说"当前数据中未找到关于XX的信息"，不要说"可能没有"。
-4. **数据驱动的具体回答**：每个结论都要有数据支持，引用具体的Bug数量、百分比、问题ID等。
-5. **始终使用中文回答**，保持专业、详细、实用。"""
+## 📋 工作流状态含义
+- submitted=提交审核 | open=已开单 | in progress=修复中 | modifying=打回修改
+- fixed=已修复未合入 | resolved=待owner审核 | verified=待测试验证 | closed=闭环
+- reopened=验收打回 | abandoned=已打回非问题
 
-PORTFOLIO_SYSTEM_PROMPT = """你是一位拥有20年以上经验的顶级软件项目群管理专家（Program Manager），曾在华为、微软等世界500强科技公司担任项目集经理和首席质量官（CQO）。你擅长对大型项目群（Program/Portfolio）进行全局风险评估和跨项目分析，能一眼看穿跨项目的共性风险和系统性瓶颈。
+## 📊 输出结构要求（必须严格遵循）
+请按以下章节组织你的分析报告，每个章节必须有明确的小标题：
 
-## ⚠️ 数据完整性声明（你必须严格遵守）：
-**你接收到的所有Jira数据均为完整的全量数据**，基于全部查询结果的完整计算，不存在任何采样、截断或数据边界限制。你**严禁**在任何分析中使用以下表述：
-- "前N个问题"、"前50个"、"前100个"等暗示数据被截断的说法
-- "样本"、"样品"、"抽样"、"当前可见数据"等暗示数据不完整的说法
-- "基于可见数据"、"基于有限数据"、"以下数据仅供参考"等弱化数据完整性的说法
-- **你的所有统计、分析和结论都必须基于完整的全量数据**，不得声称任何数据限制
+### 一、执行摘要
+- 项目名称、数据范围、Bug总数、未解决数/解决率/闭环率
+- **一句话风险定级**：🟢低风险 / 🟡中风险 / 🔴高风险 / 🔴🔴严重风险
+- 核心结论（2-3句话概括项目当前状态）
 
-## 核心原则：
-1. **数据驱动**：所有分析必须基于提供的全量Jira数据，引用具体的项目名称、Bug ID和统计数据，确保每个结论都有据可依
-2. **项目群视角**：不只看单个项目，横向对比多个项目，识别跨项目的共性问题和风险模式
-3. **项目级粒度**：每个项目都要单独分析其风险状况，明确指出"哪个项目存在什么风险"
-4. **重点突出**：聚焦高风险模块和高影响领域，避免平均主义的信息堆砌
-5. **实用建议**：提供具体、可执行、针对特定项目或特定类型风险的改进建议
-6. ⚠️ **项目名称规则**：项目名称已从"Affect Project"字段提取（非Jira库名），请直接使用数据中列举的项目名称（如 CN6、CN6c、X6898、LK7 等），不要翻译或转换为Jira项目键名
+### 二、未解决问题风险分析
+- **关键风险条目**：🚫MP Block和🧱阻塞测试问题的详细分析（这是最重要的部分，放在最前面）
+- **严重问题清单**：Blocker/Critical问题的逐条分析（Bug编号、摘要、状态、负责人、影响）
+- **按模块/领域归类**：将上述问题按功能模块和业务领域归类
 
-## 🚫 输出格式禁令：
-**严禁输出原始Markdown表格**（即使用 `|` 和 `---` 绘制的表格格式）。你的报告必须是**专业自然语言格式**的项目管理报告，使用以下格式：
-- 使用中文段落、标题、要点列表等自然文本格式
-- 数据点应融入文字描述中，而非以表格行列形式呈现
-- 每个项目/模块的分析应有清晰的小标题和说明性文字
-- 确保报告可以直接复制粘贴到邮件、PPT或文档中，无需二次格式化
+### 三、严重问题深度分析
+- **根因归类**：将严重问题按根因分类（如：驱动问题、兼容性问题、性能问题、设计缺陷等）
+- **模块分布**：哪些模块是重灾区（Camera、通信、显示、性能等）
+- **业务领域分布**：哪些业务领域风险集中
+- **影响范围评估**：对项目交付进度和质量的影响
 
-## 输出结构要求（全项目群风险分析）：
-必须采用以下专业报告结构，用自然语言呈现：
+### 四、模块与领域风险分布
+- 列出各功能模块的Bug分布和未解决情况
+- 标注高风险模块（未解决多/严重问题集中的模块）
+- 跨模块共性问题识别
 
-### 一、项目群执行摘要（Executive Summary）
-- 覆盖的项目列表（使用数据中实际项目名称，非Jira库名）、版本范围
-- 整体指标：Bug总数、未解决数、解决率、优先级分布（Blocker/Critical/Major）
-- **整体风险评估结论**（一句话定论）
-- 核心判断：项目群当前处于什么状态
+### 五、质量指标分析
+- 闭环率、解决率、修复率
+- 已解决/已关闭/待验证/已打回的数量分布
+- 质量趋势判断
 
-### 二、各项目风险详情（逐项目分析）
-对每个项目单独分析，使用自然语言段落，每个项目的分析格式如下：
+### 六、改进建议
+- 针对高风险项的具体处理建议
+- 针对系统性共性的改进措施
+- 建议的优先级（P0/P1/P2）
 
-**项目名称（涉及版本）**
-- Bug总数：X | 未解决：X | 解决率：X% | 风险评估：🔴高风险/🟡中风险/🟢低风险
-- 高风险项列表（Bug ID + 摘要 + 当前状态）
-- 中风险项说明
-- 核心风险判断：一句话总结该项目的主要风险点
-- 影响评估：对版本交付的影响程度
+## 🚫 输出禁令
+1. **绝对禁止使用"可能"、"好像"、"或许"、"大概"、"无法确定"等模糊词汇**
+2. **禁止输出原始数据表格**（不要用 `| --- |` 格式）
+3. **所有结论必须用自然语言段落呈现**，融入具体数据
+4. **结论必须有数据支持**（引用Bug数量、百分比、问题ID等）
+
+请用中文输出，语言专业、简洁、有层次感。重点突出高风险项，让读者一眼看到核心问题所在。"""
+
+PORTFOLIO_SYSTEM_PROMPT = """你是一位拥有20年以上经验的顶级软件项目群管理专家（Program Manager），负责对多项目/项目群进行专业风险评估。你的报告风格如同向CTO/VP汇报，严谨、结构化、决策导向。
+## ⚠️ 数据使用规则
+1. **全量数据**：你收到的是完整的全量数据（包含所有项目已解决和未解决的问题），所有统计基于全量计算
+2. **风险聚焦未解决**：风险结论只聚焦于未解决的问题。已解决问题的数据用于计算闭环率/解决率等质量指标
+3. **严禁使用"样本"、"抽样"、"前N个"等暗示数据不完整的表述**
+
+## 🔥 风险判断依据（重要性排序）
+1. **Must_Resolve=MP Block**（🚫MP标记）：必须解决的最高优先级问题
+2. **标签=阻塞测试**（🧱阻塞标记）：阻塞测试流程的直接证据
+3. **Priority等级**：Blocker/Critical/High/Major，作为辅助参考
+
+## 📋 工作流状态含义
+- submitted=提交审核 | open=已开单 | in progress=修复中 | modifying=打回修改
+- fixed=已修复未合入 | resolved=待owner审核 | verified=待测试验证 | closed=闭环
+- reopened=验收打回 | abandoned=已打回非问题
+
+## 📊 输出结构要求（必须严格遵循）
+
+### 一、项目群执行摘要
+- 覆盖项目范围、Bug总数、未解决总数、整体解决率/闭环率
+- **一句话风险定级**：🟢低风险 / 🟡中风险 / 🔴高风险 / 🔴🔴严重风险
+- 项目级一览（每个项目一句话标注风险等级）
+
+### 二、各项目风险详情（每个项目独立分析）
+对每个项目按以下格式逐一分析：
+
+**项目名称**
+- 数据：Bug总数X | 未解决X | 解决率X% | 闭环率X%
+- 高风险项（MP Block/阻塞测试/Blocker/Critical）
+- 主要风险模块和领域
+- 核心风险判断（一句话）
+- 影响评估（对版本交付的影响）
 
 ### 三、跨项目共性问题
-- 识别多个项目中同时存在的同类风险
-- 按领域/模块归类，列出涉及的具体Bug ID和项目
+- 多个项目中同时存在的同类风险
+- 按领域/模块归类，列出涉及的具体项目
 - 判断是偶发问题还是系统性问题
 
-### 四、风险模块与领域分布
-- 按功能模块（如Camera、通信、性能、显示等）归类风险
-- 每个模块涉及的项目和Bug数量
-- 高风险模块预警
+### 四、严重问题深度分析
+- **根因归类**：将各项目的严重问题按根因分类
+- **模块分布**：哪些模块是跨项目的重灾区
+- **业务领域分布**：哪些业务领域风险最集中
+- **影响范围评估**：对项目群整体交付进度的影响
 
-### 五、根因分析与改进建议
-- 系统性问题根因分析
-- 针对每个高风险项目的具体改进建议
-- 建议的优先级和预期效果
+### 五、质量指标横向对比
+- 各项目闭环率/解决率/修复率对比
+- 突出表现异常的项目（闭环率显著偏低等）
 
-## 数据使用要求：
-1. **始终基于全量Jira数据**：所有分析必须基于提供的完整数据，引用具体的Bug ID和统计
-2. **准确反映数据**：风险等级、问题分类必须与数据一致，不得虚构
-3. **关注趋势和模式**：在多个项目中发现同类问题时，明确指出"该项目群XXX模块存在系统性问题"
-4. **提供数据支持**：在结论中引用具体数据，如"X6840项目共15个未解决问题，其中3个阻塞问题涉及Camera模块"
+### 六、改进建议
+- 针对高风险项目的具体建议
+- 针对系统性共性问题的改进措施
+- 建议优先级和预期效果
 
-## 对话风格：
-1. **专业正式**：像资深项目群经理向CTO/VP汇报一样，使用正式、专业的语言
-2. **结构清晰**：报告要有清晰的层次感，每个部分有明确的小标题
-3. **重点突出**：高风险/高影响的问题放在前面，用⚠️/🔴等符号标注
-4. **数据融入文字**：将关键数字自然地融入文字描述中，而非单独列出
+## 🚫 输出禁令
+1. **绝对禁止使用"可能"、"好像"、"或许"、"大概"、"无法确定"等模糊词汇**
+2. **禁止输出原始Markdown表格**（不要用 `| --- |` 格式，数据融入文字描述）
+3. **所有结论用自然语言段落呈现**
+4. **结论必须有数据支持**（引用Bug数量、百分比、项目名称等）
+5. **项目名称必须使用数据中的业务项目名**（如 CN6、X6898、LK7），不要用Jira键名
 
-## 回答规范（重要！）
-1. **必须给出确定性结论**：所有结论必须是明确、肯定的。例如"该项目存在3个阻塞问题，风险等级为高"，而不是"可能存在问题"。
-2. **禁止使用模糊词汇**：严禁使用"可能"、"好像"、"或许"、"大概"、"无法确定"、"我不确定"等不确定的表述。
-3. **信息不足时明确说明**：如果数据不足以对某个方面做出判断，直接说"数据中未显示关于XX的信息"。
-4. **引用具体数据**：每个结论都必须有具体的数据支持，引用Bug数量、问题ID、百分比等。
-
-请根据用户查询的具体意图和提供的数据情况，提供最专业的项目群风险分析。记住：数据是全量的、完整的，你的分析必须基于完整数据给出专业判断，严禁输出任何形式的原始Markdown表格。"""
+请用中文输出，语言专业、精炼、层次分明，让读者能快速定位核心风险和决策要点。"""
 
 
 # ── Function Calling Schema：替代文本解析，强制结构化输出 ──
@@ -641,7 +743,7 @@ INTENT_FUNCTION_SCHEMA = {
 }
 
 # ── Function Calling Schema：JQL 过滤条件生成 ──
-# 应用黄金法则：enum 限制 query_mode，description 用业务语言
+# filter_conditions 由 schema 严格约束
 JQL_FUNCTION_SCHEMA = {
     "type": "function",
     "function": {
@@ -733,6 +835,88 @@ def _parse_intent(llm_output):
     }
 
 
+def _load_jira_rules():
+    """加载Jira规则知识库JSON，返回格式化后的知识文本"""
+    rules_file = os.path.join(os.path.dirname(__file__), 'jira_rules_knowledge.json')
+    try:
+        with open(rules_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return ""
+
+    parts = []
+
+    # 字段定义
+    fd = data.get("field_definitions", {})
+    parts.append("## Jira字段知识")
+    for cid, info in fd.items():
+        name = info.get("name", cid)
+        desc = info.get("description", "")
+        parts.append(f"- {name} ({cid}): {desc}")
+        if "values" in info:
+            parts.append(f"  可选值: {', '.join(info['values'])}")
+        if "risk_mapping" in info:
+            for k, v in info["risk_mapping"].items():
+                parts.append(f"  - {k}: {v}")
+
+    # 工作流状态
+    ws = data.get("workflow_states", {})
+    parts.append("\n## 工作流状态风险含义")
+    for state, info in ws.items():
+        parts.append(f"- {state} → {info.get('category', '未知')} (风险相关性: {info.get('risk_relevance', '未知')})")
+
+    # 摘要模板
+    bst = data.get("bug_summary_template", {})
+    parts.append(f"\n## Bug摘要模板格式")
+    parts.append(f"标准格式: {bst.get('format', '')}")
+    parts.append(f"示例: {bst.get('example', '')}")
+    fe = bst.get("fields_explanation", {})
+    for k, v in fe.items():
+        parts.append(f"- 【{k}】: {v}")
+
+    # 模块-领域映射（精简）
+    mdm = data.get("module_domain_mapping", {})
+    parts.append(f"\n## 模块→领域映射（仅列出常见映射）")
+    domain_map = {}
+    for mod, domain in mdm.items():
+        if mod == "_note":
+            continue
+        if domain not in domain_map:
+            domain_map[domain] = []
+        if len(domain_map[domain]) < 5:
+            domain_map[domain].append(mod)
+    for domain, mods in sorted(domain_map.items()):
+        parts.append(f"- {domain}: {', '.join(mods)}")
+
+    return "\n".join(parts)
+
+
+def _call_ai_silent(messages, system_prompt, max_tokens=None, temperature=0.7):
+    """
+    静默调用AI——不流式输出，只返回完整响应文本。
+    用于分批分析中的子批次提取，避免中间结果污染前端answer区域。
+    """
+    response = call_ai_api(
+        messages=messages,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        stream=False,
+        max_retries=2,
+        retry_delay=3,
+        max_tokens=max_tokens,
+        timeout=120
+    )
+    if response and response.status_code == 200:
+        try:
+            data = response.json()
+            choices = data.get('choices', [])
+            if choices:
+                return choices[0].get('message', {}).get('content', '')
+        except Exception:
+            return None
+    return None
+
+
 class RiskAnalysisAgent:
     """
     AI Agent for Jira Risk Analysis.
@@ -752,11 +936,11 @@ class RiskAnalysisAgent:
     def __init__(self, context_memory=None):
         self.intent = None
         self.jql_all = None
-        self.jql_unresolved = None
         self.issues_all = []
         self.issues_unresolved = []
         self.last_analysis = None
         self.context_memory = context_memory or ContextMemory()
+        self._ai_disabled = False  # AI服务是否不可用（降级标志）
 
     def understand_intent(self, user_query, conversation_history=None):
         """Step 1: Use LLM to understand user intent with context memory"""
@@ -882,30 +1066,44 @@ class RiskAnalysisAgent:
             tool_choice={"type": "function", "function": {"name": "set_jql_filters"}},
             temperature=0.2
         )
+        ai_available = True
         if result:
             query_mode = result.get("query_mode", "UNRESOLVED")
             llm_jql = result.get("filter_conditions", "")
         else:
             # Fallback：API 不支持 function calling 时回退到文本解析
             llm_output = _call_llm_structured(messages, FILTER_ONLY_SYSTEM, temperature=0.2)
-            if not llm_output:
-                return False
-            lines = [l.strip() for l in llm_output.strip().split('\n') if l.strip()]
-            if len(lines) >= 2:
-                query_mode = lines[0].upper()
-                llm_jql = lines[1]
+            if llm_output:
+                lines = [l.strip() for l in llm_output.strip().split('\n') if l.strip()]
+                if len(lines) >= 2:
+                    query_mode = lines[0].upper()
+                    llm_jql = lines[1]
+                else:
+                    query_mode = "UNRESOLVED"
+                    llm_jql = lines[0] if lines else ""
             else:
+                # AI 不可用 → 降级到规则解析
+                _log("warning", "AI服务不可用（API返回非200状态码），降级到规则解析生成JQL")
+                ai_available = False
+                self._ai_disabled = True
+                llm_jql = _generate_jql_fallback(project_name, template_clause, raw_query)
+                if not llm_jql:
+                    return False
                 query_mode = "UNRESOLVED"
-                llm_jql = lines[0] if lines else ""
 
-        # ── 后处理：去掉 LLM 可能乱加的 project = "X" 或 labels = "风险" ──
-        llm_jql = _strip_project_clause(llm_jql)
-        llm_jql = _strip_risk_label(llm_jql)
+        # ── 后处理：去掉 LLM 可能乱加的 project = "X" 或 labels = "风险" 或 summary ~ "项目名" ──
+        if ai_available:
+            llm_jql = _strip_project_clause(llm_jql)
+            llm_jql = _strip_risk_label(llm_jql)
+            llm_jql = _strip_summary_clause(llm_jql, project_name)
 
         # ── 拼接：强制使用模板 project 子句 ──
         if template_clause:
-            if llm_jql:
+            if llm_jql and ai_available:
                 jql = f"{template_clause} AND {llm_jql}"
+            elif llm_jql and not ai_available:
+                # 规则降级已包含完整JQL（含project子句），直接用
+                jql = llm_jql
             else:
                 jql = template_clause
         else:
@@ -915,35 +1113,41 @@ class RiskAnalysisAgent:
         jql = re.sub(r'\s+AND\s+ALL(\s+AND\s+)?', ' AND ', jql, flags=re.IGNORECASE).strip()
         jql = re.sub(r'\s+AND\s+$', '', jql).strip()
 
-        if query_mode == "ALL":
-            self.jql_all = jql
-            self.jql_unresolved = f"{jql} AND resolution = Unresolved"
-        else:
-            self.jql_all = None
-            if template_clause:
-                self.jql_unresolved = f"{jql} AND resolution = Unresolved"
-            else:
-                self.jql_unresolved = jql
+        # ── 双 JQL 模式：始终生成全量和未解决两种 JQL ──
+        # 全量数据（无 resolution 过滤）用于全局统计，未解决子集用于风险判断
+        self.jql_all = jql
 
         return True
 
     def fetch_data(self):
-        """Step 3: Fetch ALL Jira data (no artificial limit)"""
+        """Step 3: Fetch Jira data using existing infrastructure"""
+        max_fetch = None  # 无限制，获取全量数据
         if self.jql_all:
-            self.issues_all = fetch_all_issues(self.jql_all)
-        if self.jql_unresolved:
-            self.issues_unresolved = fetch_all_issues(self.jql_unresolved)
-        if not self.jql_all:
-            self.issues_all = self.issues_unresolved
+            self.issues_all = fetch_all_issues(self.jql_all, max_fetch=max_fetch)
+        self.issues_unresolved = self._filter_unresolved_by_status(self.issues_all)
 
         total = len(self.issues_all) if self.issues_all else 0
         _log("info", f"全量获取完成: 共 {total} 条问题")
         self._large_dataset = total > 3000
 
+    @staticmethod
+    def _filter_unresolved_by_status(issues=None):
+        """按状态机判定未解决问题：只有 abandoned 和 closed 算已解决，其他状态都算未解决"""
+        resolved_statuses = {"abandoned", "closed"}
+        if issues is None:
+            return []
+        return [i for i in issues
+                if i.get('fields', {}).get('status', {}).get('name', '').lower() not in resolved_statuses]
+
     def _batch_analyze(self, issues, enhanced_query, sse_queue, system_prompt):
         """
-        分批分析大规模数据（>500条）。
-        将问题排序后分多批，每批单独AI分析，最后汇总。
+        分批分析大规模数据（>3000条）。
+
+        流程：
+        1. 按优先级排序后分 BATCH_SIZE=2000 条一批
+        2. 每批静默调用AI提取关键风险条目（不流式输出到前端）
+        3. 每批完成后发送 thinking 事件告知进度
+        4. 所有批次提取完毕后，将全量统计 + 各批条目输入AI做最终汇总（流式输出为answer）
 
         Returns:
             str: 最终综合分析报告
@@ -952,7 +1156,7 @@ class RiskAnalysisAgent:
         total = len(issues)
         total_batches = max(1, (total + BATCH_SIZE - 1) // BATCH_SIZE)
 
-        sse_queue.put(('thinking', f'📊 数据量较大（共{total}条），将分{total_batches}批进行分析... '))
+        sse_queue.put(('thinking', f'📊 数据量较大（共{total}条），将分{total_batches}批提取关键风险条目... '))
 
         priority_sorted = sorted(
             issues,
@@ -963,56 +1167,66 @@ class RiskAnalysisAgent:
             }.get(x.get('fields', {}).get('priority', {}).get('name', '').lower(), 99)
         )
 
-        batch_summaries = []
+        batch_extractions = []
         for batch_idx in range(0, total, BATCH_SIZE):
             batch = priority_sorted[batch_idx:batch_idx + BATCH_SIZE]
             batch_num = batch_idx // BATCH_SIZE + 1
 
-            sse_queue.put(('thinking', f'⏳ 正在分析第 {batch_num}/{total_batches} 批（{len(batch)} 条）... '))
+            sse_queue.put(('thinking', f'⏳ 正在提取第 {batch_num}/{total_batches} 批的关键风险条目... '))
 
-            jira_data = format_portfolio_data(
-                batch,
-                max_block=200,
-                max_critical=150,
-                max_high=100
-            )
+            jira_data = format_portfolio_data(batch, max_detail=80)
 
             batch_prompt = (
                 f"用户问题：{enhanced_query}\n\n"
-                f"### 第{batch_num}/{total_batches}批数据\n"
-                f"这是全部{total}条数据中的一部分（第{batch_idx+1}-{min(batch_idx+BATCH_SIZE, total)}条），"
-                f"请分析这一批中的风险问题、分布特征和异常模式。\n\n"
-                f"真实Jira数据：{jira_data}"
+                f"### 第{batch_num}/{total_batches}批（全部共{total}条）\n"
+                f"这是全量数据按优先级排序后的第{batch_idx+1}-{min(batch_idx+BATCH_SIZE, total)}条。\n\n"
+                f"请从这批数据中提取需要关注的具体风险条目，注意：\n"
+                f"1. 只列举你在这批数据中观察到的具体异常条目（如某条Block级别的未解决问题）\n"
+                f"2. 不要做汇总性分析，不要评价整体情况\n"
+                f"3. 不要使用'本批次'、'本批'等字眼\n\n"
+                f"真实Jira数据：\n{jira_data}"
             )
 
             batch_system = (
-                "你是一个Jira风险分析助手。这是整体数据中的一批，请分析：\n"
-                "1. 这批数据中的主要风险问题（Block/Critical/High）\n"
-                "2. 批次内的分布特征\n"
-                "3. 突出的异常点\n"
-                "输出要简洁，只输出分析结果本身，不输出统计列表。"
+                "你是一个Jira风险分析助手，当前正在处理全量数据中的一个子集。\n"
+                "请只做以下事情：\n"
+                "1. 列出需要关注的具体风险条目（Block/Critical的未解决问题、MP Block标记、阻塞测试标签等）\n"
+                "2. 如果发现本子集中有特别的异常模式（如某个模块集中出现阻塞问题），简要说明\n"
+                "3. 不要输出汇总统计——统计信息会在最终阶段统一处理\n"
+                "输出要简洁，每行一条。"
             )
 
-            content = stream_ai_to_queue(
+            # 静默调用AI——不推送到SSE队列，只获取返回文本
+            content = _call_ai_silent(
                 messages=[{"role": "user", "content": batch_prompt}],
                 system_prompt=batch_system,
-                sse_queue=sse_queue,
                 max_tokens=4096
             )
-            batch_summaries.append(content or "")
+            batch_extractions.append(content or "")
 
-        # ── 汇总所有批次分析 ──
-        sse_queue.put(('thinking', f'🔄 正在汇总 {total_batches} 批分析结果... '))
+            sse_queue.put(('thinking', f'✅ 第{batch_num}/{total_batches}批提取完成'))
 
-        summary_text = ""
-        for i, s in enumerate(batch_summaries):
-            clean = s[-2000:] if len(s) > 2000 else s
-            summary_text += f"\n--- 第{i+1}批分析 ---\n{clean}\n"
+        # ── 最终汇总：全量统计 + 各批关键条目 → AI流式输出 ──
+        sse_queue.put(('thinking', f'🔄 正在对全量{total}条数据做最终综合分析... '))
+
+        # 全量数据统计（format_portfolio_data 输出完整统计+严重问题列表）
+        full_stats = format_portfolio_data(priority_sorted, max_detail=150)
+
+        # 所有批次的关键条目汇总
+        extractions_text = ""
+        for i, s in enumerate(batch_extractions):
+            extractions_text += f"\n--- 第{i+1}批关键条目 ---\n{s}\n"
+
         merge_prompt = (
             f"用户问题：{enhanced_query}\n\n"
-            f"全部{total}条数据已分{total_batches}批分析完毕，以下是各批分析结果：\n\n"
-            f"{summary_text}\n\n"
-            f"请根据以上各批分析，生成一份完整的综合风险评估报告。"
+            f"以下是全量{total}条Jira数据的完整统计以及各批次提取的关键风险条目。\n"
+            f"请基于这些信息生成一份专业的综合风险评估报告。\n\n"
+            f"【全量数据统计】\n{full_stats}\n\n"
+            f"【各批次关键风险条目】\n{extractions_text}\n\n"
+            f"要求：\n"
+            f"1. 基于全量统计做定量分析（闭环率、解决率、阻塞分布等）\n"
+            f"2. 结合各批次提取的关键条目做定性分析（具体风险项）\n"
+            f"3. 输出综合性结论，不要提及'批次'概念"
         )
 
         full_content = stream_ai_to_queue(
@@ -1025,8 +1239,17 @@ class RiskAnalysisAgent:
 
     def stream_analysis(self, sse_queue, user_query, conversation_history=None):
         """Step 4: Stream AI analysis using existing infrastructure"""
+        # AI不可用时跳过分析（_run_jira_pipeline 会触发降级摘要）
+        if self._ai_disabled:
+            return None
+
         is_portfolio = self.intent and self.intent.get("project") == "ALL"
         system_prompt = PORTFOLIO_SYSTEM_PROMPT if is_portfolio else ANALYSIS_SYSTEM_PROMPT
+
+        # 注入Jira规则知识
+        jira_rules_text = _load_jira_rules()
+        if jira_rules_text:
+            system_prompt = f"{system_prompt}\n\n## Jira规则知识（用于辅助分析）\n{jira_rules_text}"
 
         # 注入上下文记忆
         context_prompt = self.context_memory.build_context_prompt()
@@ -1051,14 +1274,14 @@ class RiskAnalysisAgent:
             )
             return full_content
 
-        issues = self.issues_unresolved or []
+        # 全量数据传给AI做统计分类（提示词已约束风险结论聚焦未解决）
+        issues = self.issues_all or []
         total = len(issues)
 
-        # 超大数据集（>3000条）→ 分批分析
+        # 超大数据集（>3000条）→ 分批提取+最终汇总
         if total > 3000:
             return self._batch_analyze(issues, enhanced_query, sse_queue, system_prompt)
 
-        # 常规数据集 → 一次性分析
         priority_sorted = sorted(
             issues,
             key=lambda x: {
@@ -1068,7 +1291,7 @@ class RiskAnalysisAgent:
             }.get(x.get('fields', {}).get('priority', {}).get('name', '').lower(), 99)
         )
 
-        jira_data = format_portfolio_data(priority_sorted)
+        jira_data = format_portfolio_data(priority_sorted, max_detail=80)
         messages = [{"role": "user", "content": f"用户问题：{enhanced_query}\n\n真实Jira数据：{jira_data}"}]
 
         full_content = stream_ai_to_queue(
@@ -1078,6 +1301,67 @@ class RiskAnalysisAgent:
             max_tokens=16384
         )
         return full_content
+
+    def _generate_fallback_analysis(self, sse_queue):
+        """AI 不可用时，基于已获取的 Jira 数据生成基础统计摘要"""
+        if not self.issues_all:
+            sse_queue.put(('answer', '⚠️ AI服务暂时不可用，且无Jira数据可展示。'))
+            return
+
+        issues = self.issues_all
+        total = len(issues)
+
+        # 按状态统计
+        status_counts = {}
+        # 按优先级统计
+        priority_counts = {}
+        # 按类型统计
+        type_counts = {}
+        # 按解决状态统计
+        resolved_count = 0
+        unresolved_count = 0
+
+        for issue in issues:
+            fields = issue.get('fields', issue)
+            # 状态
+            raw_status = fields.get('status', {})
+            status_name = raw_status.get('name', '未知') if isinstance(raw_status, dict) else str(raw_status)
+            status_counts[status_name] = status_counts.get(status_name, 0) + 1
+
+            # 优先级
+            raw_priority = fields.get('priority', {})
+            priority_name = raw_priority.get('name', '未知') if isinstance(raw_priority, dict) else str(raw_priority)
+            priority_counts[priority_name] = priority_counts.get(priority_name, 0) + 1
+
+            # 类型
+            raw_type = fields.get('issuetype', {})
+            type_name = raw_type.get('name', '未知') if isinstance(raw_type, dict) else str(raw_type)
+            type_counts[type_name] = type_counts.get(type_name, 0) + 1
+
+            # 解决状态
+            if any(s in status_name for s in ['Resolved', 'Closed', 'Fixed', '已解决', '关闭']):
+                resolved_count += 1
+            else:
+                unresolved_count += 1
+
+        # 构建摘要报告
+        status_summary = ', '.join(f'{k}: {v}个' for k, v in sorted(status_counts.items(), key=lambda x: -x[1]))
+        priority_summary = ', '.join(f'{k}: {v}个' for k, v in sorted(priority_counts.items(), key=lambda x: -x[1]))
+        type_summary = ', '.join(f'{k}: {v}个' for k, v in sorted(type_counts.items(), key=lambda x: -x[1]))
+        close_rate = round(resolved_count / total * 100, 1) if total > 0 else 0
+
+        project_name = self.intent.get("project", "") if self.intent else ""
+        report = (
+            f"⚠️ AI分析服务暂时不可用，以下为基础数据统计（共{total}条问题）：\n\n"
+            f"**📊 项目 {project_name} 数据概览**\n\n"
+            f"**闭环情况**：已解决 {resolved_count} 条（{close_rate}%），未解决 {unresolved_count} 条\n\n"
+            f"**按状态分布**：{status_summary}\n\n"
+            f"**按优先级分布**：{priority_summary}\n\n"
+            f"**按类型分布**：{type_summary}\n\n"
+            f"> 🔔 请检查AI服务配置（AI_BASE_URL/AI_API_KEY），恢复后即可获得深度AI分析报告。"
+        )
+
+        sse_queue.put(('answer', report))
 
     def _generate_kanban_data(self):
         """从已获取的Jira问题生成看板分类数据"""
@@ -1196,10 +1480,25 @@ class RiskAnalysisAgent:
             # Custom fields
             customfield_10000 = fields.get('customfield_10000', '')
             customfield_10001 = fields.get('customfield_10001', '')
+            customfield_10002 = fields.get('customfield_10002', '')  # Business Domain
+
+            # Business_Domain
+            business_domain = ''
+            if isinstance(customfield_10002, str):
+                business_domain = customfield_10002.strip()
+            elif isinstance(customfield_10002, dict):
+                business_domain = customfield_10002.get('value', '') or customfield_10002.get('name', '')
+            if not business_domain and comp_str:
+                business_domain = lookup_domain(comp_str)
+
+            # ResolutionDate
+            resolution_date = fields.get('resolutiondate', '')
 
             # Must_Resolve - try to extract from custom field or labels
             must_resolve = ''
             if isinstance(customfield_10000, str) and 'MP Block' in customfield_10000:
+                must_resolve = 'MP Block'
+            elif isinstance(customfield_10000, dict) and 'MP Block' in customfield_10000.get('value', ''):
                 must_resolve = 'MP Block'
             elif any('MP Block' in l for l in labels):
                 must_resolve = 'MP Block'
@@ -1232,7 +1531,9 @@ class RiskAnalysisAgent:
                 "Affect_Project": affect_project,
                 "Issue_Category": issue_category,
                 "Assignee": assignee_name,
-                "Labels": labels
+                "Labels": labels,
+                "Business_Domain": business_domain,
+                "ResolutionDate": resolution_date
             })
 
         return result
@@ -1512,9 +1813,10 @@ class RiskAnalysisAgent:
             sse_queue.put(('error', 'JQL生成失败，请重试'))
             return
 
+        if self._ai_disabled:
+            sse_queue.put(('thinking', '⚠️ AI服务暂不可用，已切换到规则模式生成JQL'))
         if self.jql_all:
-            sse_queue.put(('jql', f"📋 生成的JQL（全量）: {self.jql_all}"))
-        sse_queue.put(('jql', f"📋 生成的JQL（未解决）: {self.jql_unresolved}"))
+            sse_queue.put(('jql', f"📋 生成的JQL: {self.jql_all}"))
 
         # Step 3: Fetch data
         sse_queue.put(('thinking', '📡 正在从Jira获取数据...'))
@@ -1545,18 +1847,19 @@ class RiskAnalysisAgent:
                 store_kanban_page_data(token, {
                     "issues": page_issues,
                     "project": self.intent.get("project", ""),
-                    "jql_all": self.jql_all,
-                    "jql_unresolved": self.jql_unresolved
+                    "jql_all": self.jql_all
                 })
                 sse_queue.put(('kanban_page_url', f'/kanban-page?token={token}'))
             except Exception as e:
                 logging.getLogger(__name__).warning(f"生成看板页面数据失败: {e}")
             sse_queue.put(('done', '分析完成'))
-            self.context_memory.update_after_query(self.intent, answer_text)
             return
 
-        # Step 4: Stream AI analysis
-        sse_queue.put(('thinking', '🤖 专家正在深入分析数据...'))
+        # Step 4: Stream AI analysis（或降级摘要）
+        if self._ai_disabled:
+            sse_queue.put(('thinking', '📊 AI暂不可用，生成基础数据统计...'))
+        else:
+            sse_queue.put(('thinking', '🤖 专家正在深入分析数据...'))
         self.last_analysis = self.stream_analysis(sse_queue, user_query, conversation_history)
         if cancel_event and cancel_event.is_set():
             sse_queue.put(('done', '分析已取消'))
@@ -1565,6 +1868,9 @@ class RiskAnalysisAgent:
         if self.last_analysis:
             summary = self.last_analysis[:500]
             self.context_memory.update_after_query(self.intent, summary)
+        else:
+            # AI 分析失败时降级：生成基础统计摘要
+            self._generate_fallback_analysis(sse_queue)
 
         kanban_data = self._generate_kanban_data()
         if kanban_data:
@@ -1576,8 +1882,7 @@ class RiskAnalysisAgent:
             store_kanban_page_data(token, {
                 "issues": page_issues,
                 "project": self.intent.get("project", ""),
-                "jql_all": self.jql_all,
-                "jql_unresolved": self.jql_unresolved
+                "jql_all": self.jql_all
             })
             sse_queue.put(('kanban_page_url', f'/kanban-page?token={token}'))
         except Exception as e:

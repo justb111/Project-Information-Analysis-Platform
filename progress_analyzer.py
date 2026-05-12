@@ -13,11 +13,35 @@ def _find_column(df, *keywords):
 
 
 def _safe_float(val):
+    """转为浮点数。'80%' → 80.0, Excel百分比格式0.8 → 0.8
+    返回值语义：若原值已是百分比尺度（如 80 或 "80%"），返回 80.0；
+    若原值是小数格式（如 0.8），返回 0.8。
+    调用方需根据值域自行判断是否需要 *100。
+    """
     try:
         v = float(val)
         return v if not np.isnan(v) else 0.0
     except (ValueError, TypeError):
-        return 0.0
+        pass
+    try:
+        s = str(val).strip().rstrip('%').strip()
+        if s:
+            return float(s)
+    except (ValueError, TypeError):
+        pass
+    return 0.0
+
+
+def _safe_percentage(val):
+    """提取百分数值，保留百分比数字（如 '20%' → 20.0, '20' → 20.0）。
+    适用于偏差率等已经以%为单位的数值。"""
+    try:
+        s = str(val).strip().rstrip('%').strip()
+        if s:
+            return float(s)
+    except (ValueError, TypeError):
+        pass
+    return 0.0
 
 
 def _safe_int(val):
@@ -31,7 +55,15 @@ def _safe_int(val):
 def _safe_str(val):
     if pd.isna(val):
         return ""
-    return str(val).strip()
+    s = str(val).strip()
+    # 清理单元格内的换行和反斜杠伪换行，取第一段
+    for sep in ('\n', '\r', '\\n', '\\r'):
+        if sep in s:
+            s = s.split(sep)[0].strip()
+    # 清理末尾的反斜杠+空格模式（Excel折行残留）
+    if s.endswith('\\'):
+        s = s[:-1].strip()
+    return s
 
 
 def _deviation_color(deviation):
@@ -67,7 +99,7 @@ def _risk_by_progress(progress_pct):
 def _risk_by_deviation(deviation):
     if deviation >= 30:
         return "high"
-    elif deviation >= 10:
+    elif deviation >= 15:
         return "warning"
     return "normal"
 
@@ -213,10 +245,17 @@ def parse_progress_excel(filepath):
     # --- Core Data: Progress ---
     if col_progress is not None:
         progress_raw = df[col_progress].apply(_safe_float)
-        if progress_raw.max() <= 2.0:
-            progress_vals = np.round(progress_raw * 100, 2)
+        print(f"[progress_analyzer] 进度列'{col_progress}' 原始值(前10): {progress_raw.head(10).tolist()}")
+        print(f"[progress_analyzer] 进度列 max={progress_raw.max()}, min={progress_raw.min()}, mean={progress_raw.mean():.2f}")
+        # 用整列均值判断格式：均值≤5 → 小数格式(0-1范围，含超量执行至3-5)，全部*100
+        # 均值>5 → 已百分比尺度(如文本"80%"→80.0)，保持不变
+        # 这种策略避免了2.0阈值拦截超量执行值(如2.842对应284%)的bug
+        col_mean = progress_raw.mean()
+        if col_mean <= 5.0:
+            progress_vals = progress_raw.apply(lambda v: round(v * 100, 2))
         else:
-            progress_vals = progress_raw
+            progress_vals = progress_raw.apply(lambda v: round(v, 2))
+        print(f"[progress_analyzer] 转换后进度值(前10): {progress_vals.head(10).tolist()}")
     elif col_planned is not None and col_executed is not None:
         planned = df[col_planned].apply(_safe_int)
         executed = df[col_executed].apply(_safe_int)
@@ -225,10 +264,37 @@ def parse_progress_excel(filepath):
     else:
         progress_vals = np.zeros(len(df))
 
-    # --- Deviation ---
+    # --- 执行进度偏差（对比时间进度） ---
+    # 正数=滞后（执行落后于时间计划），负数=超前（执行快于时间计划）
     if col_deviation is not None:
-        deviation_vals = df[col_deviation].apply(_safe_float)
+        deviation_vals = df[col_deviation].apply(_safe_percentage)
+        # 逐值判断缩放：值≤2 视为小数格式需*100，值>2 视为已百分比尺度
+        def _scale_deviation(v):
+            if -2.0 <= v <= 2.0:
+                return round(v * 100, 2)
+            return round(v, 2)
+        deviation_vals = deviation_vals.apply(_scale_deviation)
+    elif col_start_date is not None and col_deadline is not None:
+        # 时间偏差率 = 应完成时间进度 - 实际执行进度
+        start_dates = pd.to_datetime(df[col_start_date], errors='coerce')
+        end_dates = pd.to_datetime(df[col_deadline], errors='coerce')
+        today = pd.Timestamp.now()
+        total_days = (end_dates - start_dates).dt.days
+        elapsed_days = (today - start_dates).dt.days
+        expected_progress = np.where(
+            (total_days > 0) & (start_dates.notna()) & (end_dates.notna()),
+            np.clip(elapsed_days / total_days, 0, 1) * 100,
+            np.nan
+        )
+        has_dates = (total_days > 0) & (start_dates.notna()) & (end_dates.notna())
+        deviation_vals = np.where(
+            has_dates,
+            np.round(expected_progress - progress_vals, 2),
+            np.round(100.0 - progress_vals, 2)
+        )
+        deviation_vals = np.clip(deviation_vals, -100, 100)
     else:
+        # 无日期时，剩余工作百分比作为偏差
         deviation_vals = np.round(100.0 - progress_vals, 2)
         deviation_vals = np.clip(deviation_vals, 0, 100)
 
@@ -264,15 +330,13 @@ def parse_progress_excel(filepath):
     project_progress_list = []
     total_planned_all = 0
     total_executed_all = 0
-    project_risk_counts = {"normal": 0, "warning": 0, "high": 0}
 
     for proj_name, group in project_groups:
         p_sum = group["_planned"].sum()
         e_sum = group["_executed"].sum()
         avg_progress = round(group["_progress"].mean(), 2)
         avg_deviation = round(group["_deviation"].mean(), 2)
-        risk = _risk_by_progress(avg_progress)
-        project_risk_counts[risk] += 1
+        risk = _risk_by_deviation(avg_deviation)
         total_planned_all += p_sum
         total_executed_all += e_sum
 
@@ -303,6 +367,13 @@ def parse_progress_excel(filepath):
         parent_proj = group["_parent_project"].iloc[0]
         is_special = bool(group["_is_special"].any())
 
+        # 项目级截止日期：取该组最晚的 deadline
+        if col_deadline is not None:
+            dl_series = pd.to_datetime(group[col_deadline], errors='coerce').dropna()
+            project_deadline = dl_series.max().strftime('%Y-%m-%d') if len(dl_series) > 0 else ""
+        else:
+            project_deadline = ""
+
         project_progress_list.append({
             "project": proj_name,
             "phase": raw_stage,
@@ -311,6 +382,7 @@ def parse_progress_excel(filepath):
             "progress": avg_progress,
             "test_progress": test_progress,
             "deviation": avg_deviation,
+            "deadline": project_deadline,
             "main_delay_plans": main_delay_plans,
             "risk_judgment": risk_judgment,
             "risk": risk,
@@ -403,53 +475,46 @@ def parse_progress_excel(filepath):
                 "special_tasks": special_tasks
             }
 
-    # 4. 项目树 (project_tree) — 大项目 → 子项目列表
+    # 4. 项目树 (project_tree) — 大项目 → 子任务列表（每行保留独立数据，不按项目名聚合）
     project_tree = {}
-    # 按 parent_project 分组
     for parent_name, group in df.groupby("_parent_project"):
         parent_name = _safe_str(parent_name)
         if not parent_name:
             continue
-        # 子项目按原始项目名分组聚合
         sub_projects = []
-        for sub_name, sub_group in group.groupby("_project"):
-            sub_name = _safe_str(sub_name)
-            if not sub_name:
-                continue
-            p_sum = sub_group["_planned"].sum()
-            e_sum = sub_group["_executed"].sum()
-            avg_progress = round(sub_group["_progress"].mean(), 2)
-            avg_deviation = round(sub_group["_deviation"].mean(), 2)
-            risk = _risk_by_deviation(avg_deviation)
-            lanes = sub_group["_lane"].value_counts()
-            main_lane = lanes.index[0] if len(lanes) > 0 else "其他"
-            raw_stages = sub_group["_raw_stage"].dropna().unique()
-            raw_stage = str(raw_stages[0]) if len(raw_stages) > 0 else "其他"
-            test_progress = round(e_sum / p_sum * 100, 1) if p_sum > 0 else 0
+        for _, row in group.iterrows():
+            row_progress = round(float(row["_progress"]), 2)
+            row_deviation = round(float(row["_deviation"]), 2)
+            row_risk = _risk_by_deviation(row_deviation)
+            row_lane = _safe_str(row["_lane"])
+            row_stage = _safe_str(row["_raw_stage"])
+            row_planned = int(row["_planned"]) if pd.notna(row.get("_planned")) else 0
+            row_executed = int(row["_executed"]) if pd.notna(row.get("_executed")) else 0
+            test_progress = round(row_executed / row_planned * 100, 1) if row_planned > 0 else row_progress
+
             delay_plans = []
             if col_plan_name is not None:
-                for _, row in sub_group.iterrows():
-                    if row["_progress"] < 50 and _safe_str(row[col_plan_name]):
-                        delay_plans.append(str(row[col_plan_name]).strip())
-            main_delay_plans = ";".join(delay_plans[:5]) if delay_plans else "-"
+                plan_val = row.get(col_plan_name)
+                if row_progress < 50 and _safe_str(plan_val):
+                    delay_plans.append(str(plan_val).strip())
 
             sub_projects.append({
-                "name": sub_name,
-                "lane": main_lane,
-                "stage": raw_stage,
+                "name": _safe_str(row["_project"]),
+                "lane": row_lane,
+                "stage": row_stage,
                 "test_progress": test_progress,
-                "deviation": avg_deviation,
-                "main_plans": main_delay_plans,
-                "risk": risk,
-                "progress": avg_progress,
-                "planned": int(p_sum),
-                "executed": int(e_sum),
-                "effort_planned": round(sub_group["_effort_planned"].sum(), 1) if col_effort_planned is not None else 0,
-                "effort_remaining": round(sub_group["_effort_remaining"].sum(), 1) if col_effort_remaining is not None else 0,
-                "creation_time": sub_group["_creation_time"].iloc[0] if col_creation_time is not None else "",
-                "start_date": sub_group["_start_date"].iloc[0] if col_start_date is not None else "",
-                "deadline": sub_group["_deadline"].iloc[0] if col_deadline is not None else "",
-                "dpm": sub_group["_dpm"].iloc[0] if col_dpm is not None else ""
+                "deviation": row_deviation,
+                "main_plans": ";".join(delay_plans[:5]) if delay_plans else "-",
+                "risk": row_risk,
+                "progress": row_progress,
+                "planned": row_planned,
+                "executed": row_executed,
+                "effort_planned": round(float(row["_effort_planned"]), 1) if col_effort_planned is not None else 0,
+                "effort_remaining": round(float(row["_effort_remaining"]), 1) if col_effort_remaining is not None else 0,
+                "creation_time": _safe_str(row["_creation_time"]) if col_creation_time is not None else "",
+                "start_date": _safe_str(row["_start_date"]) if col_start_date is not None else "",
+                "deadline": _safe_str(row["_deadline"]) if col_deadline is not None else "",
+                "dpm": _safe_str(row["_dpm"]) if col_dpm is not None else ""
             })
 
         if sub_projects:
@@ -502,11 +567,23 @@ def parse_progress_excel(filepath):
             risks_list.append(risk_item)
 
     # --- Summary ---
-    total_projects = len(project_progress_list)
+    # 父级项目计数（按 _parent_project 去重，如CN6c-OPPJ和CN6c-OP同属CN6c）
+    parent_project_count = df["_parent_project"].nunique()
+    total_projects = int(parent_project_count)
     total_tasks = sum(p["tasks_count"] for p in project_progress_list)
-    normal_count = project_risk_counts["normal"]
-    warning_count = project_risk_counts["warning"]
-    high_count = project_risk_counts["high"]
+
+    # 父项目级风险统计：每个父项目取其下所有任务的最差风险等级
+    RISK_SEVERITY = {"normal": 0, "warning": 1, "high": 2}
+    parent_risk_map = {}
+    for p in project_progress_list:
+        pp = p["parent_project"]
+        cur_sev = RISK_SEVERITY.get(p["risk"], 0)
+        if pp not in parent_risk_map or cur_sev > RISK_SEVERITY.get(parent_risk_map[pp], 0):
+            parent_risk_map[pp] = p["risk"]
+    normal_count = sum(1 for r in parent_risk_map.values() if r == "normal")
+    warning_count = sum(1 for r in parent_risk_map.values() if r == "warning")
+    high_count = sum(1 for r in parent_risk_map.values() if r == "high")
+
     health_rate = round(
         (normal_count * 100 + warning_count * 50) / total_projects if total_projects > 0 else 0
     )
@@ -599,9 +676,39 @@ def parse_progress_excel(filepath):
                 })
             trend_list.sort(key=lambda x: x["date"])
 
+    # --- 独立任务级数据（每行一条，不按项目聚合） ---
+    task_progress_list = []
+    for idx, row in df.iterrows():
+        t_dev = row["_deviation"]
+        if abs(t_dev) >= 30:
+            t_risk = "high"
+        elif abs(t_dev) >= 15:
+            t_risk = "warning"
+        else:
+            t_risk = "normal"
+        task_progress_list.append({
+            "name": row["_project"],
+            "parent_project": row["_parent_project"],
+            "phase": row["_raw_stage"],
+            "lane": row["_lane"],
+            "progress": round(row["_progress"], 2),
+            "deviation": round(float(t_dev), 2),
+            "risk": t_risk,
+            "dpm": row["_dpm"],
+            "deadline": str(row["_deadline"]) if row["_deadline"] else "",
+            "start_date": str(row["_start_date"]) if row["_start_date"] else "",
+            "creation_time": str(row["_creation_time"]) if row["_creation_time"] else "",
+            "plan_name": str(row[col_plan_name]).strip() if col_plan_name is not None and pd.notna(row.get(col_plan_name)) else "",
+            "planned": int(row["_planned"]),
+            "executed": int(row["_executed"]),
+            "effort_planned": round(float(row["_effort_planned"]), 2) if col_effort_planned is not None else 0,
+            "effort_remaining": round(float(row["_effort_remaining"]), 2) if col_effort_remaining is not None else 0,
+        })
+
     return {
         "summary": summary,
         "project_progress": project_progress_list,
+        "task_progress": task_progress_list,
         "swimlane": swimlane,
         "dept_load": dept_load_list,
         "hr_members": hr_members,
@@ -633,6 +740,17 @@ def analyze_with_intelligence(filepath):
         if result.get("success"):
             metrics = result["metrics"]
 
+            # 从原始数据中获取日期用于偏差计算
+            df = result.get("_raw_df")
+            col_mapping = result.get("column_mapping", {})
+            col_map_rev = {}
+            for c, t in col_mapping.items():
+                col_map_rev.setdefault(t, []).append(c)
+
+            def _get_col(target):
+                cols = col_map_rev.get(target, [])
+                return cols[0] if cols else None
+
             summary = {
                 "total_projects": metrics.get("total_projects", 0),
                 "normal": metrics.get("normal", 0),
@@ -653,19 +771,77 @@ def analyze_with_intelligence(filepath):
 
             project_progress_list = []
             for p in metrics.get("project_progress", []):
+                prog_val = p["progress"]  # 0-100 百分比
+                proj_name = p.get("project", "")
+                # 执行进度偏差 = 应完成时间进度 - 实际执行进度
+                dev = None
+                if df is not None:
+                    sd_col = _get_col("start_date")
+                    ed_col = _get_col("end_date")
+                    pcol = _get_col("project")
+                    if sd_col and ed_col and pcol:
+                        proj_mask = df[pcol].astype(str).str.strip() == str(proj_name)
+                        proj_df = df[proj_mask]
+                        if not proj_df.empty:
+                            sd = pd.to_datetime(proj_df[sd_col], errors='coerce')
+                            ed = pd.to_datetime(proj_df[ed_col], errors='coerce')
+                            today = pd.Timestamp.now()
+                            valid = sd.notna() & ed.notna()
+                            if valid.any():
+                                avg_total = (ed[valid] - sd[valid]).dt.days.mean()
+                                avg_elapsed = (today - sd[valid]).dt.days.mean()
+                                if avg_total > 0:
+                                    expected = min(100, avg_elapsed / avg_total * 100)
+                                    dev = round(expected - prog_val, 2)
+                # 无有效日期时，用剩余工作百分比
+                if dev is None:
+                    dev = round(100.0 - prog_val, 2)
+                dev = max(-100, min(100, dev))
+
+                risk = _risk_by_deviation(dev)
+
+                # 截止日期
+                proj_deadline = ""
+                if df is not None:
+                    ed_col = _get_col("end_date")
+                    pcol = _get_col("project")
+                    if ed_col and pcol:
+                        proj_mask = df[pcol].astype(str).str.strip() == str(proj_name)
+                        proj_df = df[proj_mask]
+                        if not proj_df.empty:
+                            dl = pd.to_datetime(proj_df[ed_col], errors='coerce').dropna()
+                            if len(dl) > 0:
+                                proj_deadline = dl.max().strftime('%Y-%m-%d')
+
                 project_progress_list.append({
-                    "project": p["project"],
-                    "progress": p["progress"],
-                    "risk": p["risk"],
-                    "risk_label": _risk_label(p["risk"]),
+                    "project": proj_name,
+                    "progress": prog_val,
+                    "risk": risk,
+                    "risk_label": _risk_label(risk),
                     "lane": p.get("phase", "其他"),
                     "manager": p.get("manager", ""),
-                    "deviation": 0,
+                    "deviation": dev,
+                    "deadline": proj_deadline,
                     "planned": 0,
                     "executed": 0,
                     "tasks_count": 0,
-                    "risk_desc": ""
+                    "risk_desc": "",
+                    "effort_planned": 0,
+                    "effort_remaining": 0,
+                    "test_progress": prog_val
                 })
+
+            # 重新汇总 risk counts
+            risk_counts = {"normal": 0, "warning": 0, "high": 0}
+            for pp in project_progress_list:
+                risk_counts[pp["risk"]] = risk_counts.get(pp["risk"], 0) + 1
+
+            summary["normal"] = risk_counts["normal"]
+            summary["warning"] = risk_counts["warning"]
+            summary["high_risk"] = risk_counts["high"]
+            summary["health_rate"] = round(
+                (risk_counts["normal"] * 100 + risk_counts["warning"] * 50) / max(len(project_progress_list), 1)
+            )
 
             swimlane = {}
             for p in project_progress_list:

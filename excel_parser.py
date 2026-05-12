@@ -135,10 +135,6 @@ def clean_data(df, column_mapping):
     for col, target in column_mapping.items():
         if target in NUMERIC_FIELDS:
             df[col] = pd.to_numeric(df[col], errors='coerce')
-            if target == "progress":
-                max_val = df[col].max()
-                if max_val > 2 and max_val <= 100:
-                    df[col] = df[col] / 100.0
 
         if target in DATE_FIELDS:
             try:
@@ -186,8 +182,11 @@ def aggregate_metrics(df, column_mapping):
             prog_vals = group[progress_col].dropna()
             if len(prog_vals) == 0:
                 continue
+            # 与 progress_analyzer._scale_progress 保持一致的逐值缩放逻辑：
+            # 值≤2视为小数格式需*100，值>2视为已百分比尺度保持不变
+            prog_vals = prog_vals.apply(lambda v: round(v * 100, 2) if v <= 2.0 else round(v, 2))
             avg_prog = float(prog_vals.mean())
-            pct = round(avg_prog * 100, 1)
+            pct = round(avg_prog, 1)
             if pct < 50:
                 risk = "high"
             elif pct < 80:
@@ -304,7 +303,8 @@ def parse_excel_intelligent(filepath):
         "confidence": {str(k): v for k, v in confidence.items()},
         "metrics": metrics,
         "columns_detected": list(df.columns),
-        "row_count": len(df)
+        "row_count": len(df),
+        "_raw_df": df
     }
 
 
@@ -345,6 +345,7 @@ def update_alias(user_col, mapped_field):
 
 def build_ai_prompt(data):
     summary = data.get("summary", {})
+    # 总项目数按父级项目计算（total_projects已在parser中按_parent_project去重）
     total = summary.get("total_projects", 0)
     normal = summary.get("normal", 0)
     warning = summary.get("warning", 0)
@@ -353,22 +354,52 @@ def build_ai_prompt(data):
     team_size = summary.get("team_size", 0)
     health = summary.get("health_rate", 0)
 
-    project_progress = data.get("project_progress", [])
     dept_load = data.get("dept_load", [])
     remaining_effort_all = data.get("remaining_effort_all", [])
+    project_tree = data.get("project_tree", {})
 
-    # 构造项目表格数据行（带行号）
+    # 从 project_tree 展开为独立任务行（每行一个独立任务，不按项目名聚合）
+    all_tasks = []
+    for parent_name, tree in project_tree.items():
+        for sp in tree.get("sub_projects", []):
+            all_tasks.append(sp)
+
+    # 若 project_tree 为空（如智能解析路径），回退到 project_progress 聚合数据
+    if not all_tasks:
+        project_progress = data.get("project_progress", [])
+        for idx, p in enumerate(project_progress):
+            all_tasks.append({
+                "name": p.get("project", "?"),
+                "stage": p.get("phase", p.get("lane", "?")),
+                "progress": p.get("progress", 0),
+                "test_progress": p.get("test_progress", p.get("progress", 0)),
+                "deviation": p.get("deviation", 0),
+                "risk": p.get("risk", "normal"),
+                "effort_planned": p.get("effort_planned", 0),
+                "effort_remaining": p.get("effort_remaining", 0),
+                "dpm": p.get("manager", ""),
+                "deadline": p.get("deadline", ""),
+                "main_plans": "-",
+                "start_date": ""
+            })
+
+    # 构建任务级表格数据行（列必须与AI输出要求的表头严格对齐）
     project_rows = []
-    for idx, p in enumerate(project_progress):
+    for idx, task in enumerate(all_tasks):
         row_num = idx + 1
-        proj_name = p.get("project", "?")
-        phase = p.get("phase", p.get("lane", "?"))
-        time_progress = p.get("progress", 0)
-        test_progress = p.get("test_progress", time_progress)
-        deviation = p.get("deviation", 0)
-        risk = p.get("risk", "normal")
-        effort_planned = p.get("effort_planned", 0)
-        effort_remaining = p.get("effort_remaining", 0)
+        task_name = task.get("name", "?")
+        stage = task.get("stage", task.get("lane", "?"))
+        progress_val = task.get("progress", 0)
+        test_progress = task.get("test_progress", progress_val)
+        deviation = task.get("deviation", 0)
+        risk = task.get("risk", "normal")
+        effort_planned = task.get("effort_planned", 0)
+        effort_remaining = task.get("effort_remaining", 0)
+        dpm = task.get("dpm", "")
+        deadline = task.get("deadline", "")
+        plan_name = task.get("main_plans", "")
+        start_date = task.get("start_date", "")
+
         if risk == "high":
             risk_text = "高风险"
         elif risk == "warning":
@@ -379,9 +410,8 @@ def build_ai_prompt(data):
             deviation_text = f"滞后{deviation}%"
         else:
             deviation_text = f"超前{abs(deviation)}%"
-        effort_text = f"预估{effort_planned}人天/剩余{effort_remaining}人天" if effort_planned > 0 else "-"
         project_rows.append(
-            f"[行{row_num}] {proj_name} | {phase} | {time_progress}% | {test_progress}% | {deviation_text} | {effort_text} | {risk_text}"
+            f"[行{row_num}] {task_name} | {stage} | {progress_val}% | {deviation_text} | {dpm} | {deadline} | {risk_text}"
         )
 
     # 人力负载详情（全量排序）
@@ -407,12 +437,15 @@ def build_ai_prompt(data):
     overall_completion = round((total_effort_planned - total_effort_remaining) / total_effort_planned * 100, 1) if total_effort_planned > 0 else 0
 
     project_table = "\n".join(project_rows) if project_rows else "无项目数据"
+    task_count = len(all_tasks)
 
     prompt = f"""项目进度风险分析数据：
 
 数据来源：《阶段计划进度.xlsx》（上传时解析）
+说明：进度数据为**执行进度**（如用例完成率）。执行进度偏差 = 应完成时间进度 - 实际执行进度，正数=滞后（执行慢于时间计划），负数=超前（执行快于时间计划）。
 
 【概览】
+- 总任务数：{task_count}
 - 总项目数：{total}
 - 正常项目：{normal}个
 - 预警项目：{warning}个
@@ -427,20 +460,20 @@ def build_ai_prompt(data):
 【人力需求详情（按DPM负责人排序）】
 {load_details or "无详细人力数据"}
 
-【各项目数据】
-序号 | 项目名 | 当前阶段 | 整体时间进度(%) | 整体测试进度(%) | 偏差情况 | 预估/剩余人力 | 风险判断
+【各任务数据（每行一个独立任务，未按项目聚合）】
+任务名 | 当前阶段 | 执行进度(%) | 执行进度偏差(%) | 负责人 | 截止日期 | 风险等级
 {project_table}
 
-请根据以上项目数据，生成一份风险分析报告。报告必须包含一个 Markdown 表格，表头严格按照以下顺序和名称：
-| 项目完整名 | 当前阶段 | 整体时间进度(%) | 整体测试进度(%) | 测试进度与时间进度偏差情况 | 人力预估/剩余情况 | 当前风险点与总体判断 |
+请根据以上任务数据，生成一份风险分析报告。报告必须包含一个 Markdown 表格，表头严格按照以下顺序和名称（共7列，与输入数据列一一对应）：
+| 任务名（不含行号前缀） | 当前阶段 | 执行进度(%) | 执行进度偏差(%) | 负责人 | 截止日期 | 当前风险点与总体判断 |
 
 【重要约束——必须遵守】
 1. **仅基于以上提供的数据回答**，不得添加任何外部信息或假设
 2. **禁止使用以下模糊词语**："好像"、"可能"、"也许"、"大概"、"似乎"、"一般来说"、"通常"
-3. **必须引用具体数据**：例如"第3行数据显示XX项目进度为0%"、"根据概览，健康度为XX%"
+3. **必须引用具体数据**：例如"第3行数据显示XX任务进度为0%"、"根据概览，健康度为XX%"
 4. **未在数据中明确体现的指标**，明确标注"数据中未提供"
-5. 偏差情况用"超前XX%"或"滞后XX%"表示
+5. 偏差正数=滞后（应完成时间进度 - 实际执行进度），负数=超前。用"滞后XX%"或"超前XX%"表示
 6. 表格之后补充核心风险总结（2-3条）和改进建议（2-3条）
 7. 语言简洁专业，使用陈述句，避免推测性表述
-8. **【关键】表格中"当前风险点与总体判断"列严禁重复项目名和具体数值**，每行用一句话概括核心风险即可。例如：进度严重滞后需紧急干预 / 进度接近目标但需关注偏差 / 进展正常"""
+8. **【关键】表格中"当前风险点与总体判断"列严禁重复项目名和具体数值**，每行用一句话概括核心风险即可。例如：进度严重滞后需紧急干预 / 进展正常 / 尚未开始需尽快启动"""
     return prompt

@@ -47,6 +47,7 @@ import threading
 
 # 导入工具函数
 from utils import call_ai_api, parse_thinking_answer, process_sse_stream, generate_sse_message, send_thinking_chars, send_answer_chars
+from domain_mapping import lookup_domain
 
 def get_friendly_ai_error():
     """获取用户友好的AI错误消息"""
@@ -841,7 +842,8 @@ def stream_ai_to_queue(messages, system_prompt, sse_queue, max_tokens=None, temp
         stream=True,
         max_retries=3,
         retry_delay=5,
-        max_tokens=max_tokens
+        max_tokens=max_tokens,
+        timeout=180  # 流式读取每块超时180秒，防止AI服务暂停发送导致永久挂起
     )
 
     if response and response.status_code == 200:
@@ -877,156 +879,323 @@ def stream_ai_to_queue(messages, system_prompt, sse_queue, max_tokens=None, temp
         return None
 
 
-def format_portfolio_data(issues, project_names=None, max_block=500, max_critical=300, max_high=200):
+def _get_risk_markers(fields):
+    """提取 issue 的关键风险标记，返回 (标记字符串, 是否为 MP Block, 是否含阻塞标签)"""
+    must_resolve = fields.get('customfield_10000', '')
+    labels = fields.get('labels', []) or []
+    markers = []
+    is_mp = (isinstance(must_resolve, str) and 'MP Block' in must_resolve) or \
+            (isinstance(must_resolve, dict) and 'MP Block' in must_resolve.get('value', ''))
+    is_blk = any('阻塞' in l for l in labels)
+    if is_mp:
+        markers.append('🚫MP')
+    if is_blk:
+        markers.append('🧱阻塞')
+    return (' [' + '/'.join(markers) + ']' if markers else ''), is_mp, is_blk
+
+
+def _module_from_summary(summary):
+    """从Bug摘要中提取【模块】信息，如【驱动组】【CN6】【SDV】【Camera】预览画面黑屏 → Camera"""
+    if not summary:
+        return ''
+    # 匹配【XXX】格式，尝试取最后一个或倒数第二个（取决于summary格式）
+    matches = re.findall(r'【([^】]+)】', summary)
+    if len(matches) >= 4:
+        # 标准格式：【部门】【项目】【阶段】【模块】
+        return matches[3].strip()
+    elif len(matches) >= 2:
+        # 非标准格式，取最后一个
+        return matches[-1].strip()
+    return ''
+
+
+def format_portfolio_data(issues, project_names=None, max_detail=80):
     """
-    全量项目群数据格式化
-    对所有问题做全量统计、按项目分组、按优先级列出
-    大数据量时自动截断详细列表，但保留完整统计
+    格式化Jira问题数据为AI可读的结构化文本。
+    清晰分离未解决问题（风险分析用）和已解决问题（质量指标用）。
 
     Args:
-        issues: Jira问题列表
-        project_names: 项目名映射
-        max_block: Block级别最多列出条数（默认500，通常很少）
-        max_critical: Critical级别最多列出条数
-        max_high: High/Major级别最多列出条数
+        issues: Jira issue列表
+        project_names: 业务项目名列表（用于显示）
+        max_detail: 详细列表最大条目数
     """
     if not issues:
-        return "未查询到相关Jira数据。"
+        return '未查询到相关Jira数据。'
 
     total = len(issues)
 
-    # 全量统计
-    status_counts = {}
+    # ── 状态分类 ──
+    RESOLVED_STATUSES = {'closed', 'verified', 'abandoned'}
+    # 未解决（用于风险分析）: submitted, open, in progress, modifying, fixed, resolved, reopened
+
+    unresolved_issues = []  # 风险分析用
+    resolved_issues = []    # 质量指标用
+
+    for issue in issues:
+        status = (issue.get('fields', {}).get('status', {}) or {}).get('name', '').lower()
+        if status in RESOLVED_STATUSES:
+            resolved_issues.append(issue)
+        else:
+            unresolved_issues.append(issue)
+
+    # ── 统计变量 ──
     priority_counts = {}
-    type_counts = {}
+    module_counts = {}
+    domain_counts = {}
     project_counts = {}
+    mp_block_issues = []
+    blocking_label_issues = []
+    blocking_issues = []   # Blocker优先级
+    critical_issues = []   # Critical优先级
 
-    # 按优先级分类
-    blocking_issues = []
-    critical_issues = []
-    high_issues = []
-    other_issues = []
-
-    BLOCKING_PRIORITIES = {"Block", "阻塞", " blocker"}
-    CRITICAL_PRIORITIES = {"Critical", "紧急", " critical"}
-    HIGH_PRIORITIES = {"High", "高", "Major", " major"}
+    PRIO_ORDER = {'Blocker': 0, 'Block': 0, 'Critical': 1, 'High': 2, 'Major': 3,
+                  'Medium': 4, 'Minor': 5, 'Low': 6, 'Trivial': 7}
 
     for issue in issues:
         fields = issue.get('fields', {})
         key = issue.get('key', '')
         status = fields.get('status', {}).get('name', '未知')
         priority = fields.get('priority', {}).get('name', '未知')
-        issue_type = fields.get('issuetype', {}).get('name', '未知')
+        summary = fields.get('summary', '')
 
-        status_counts[status] = status_counts.get(status, 0) + 1
         priority_counts[priority] = priority_counts.get(priority, 0) + 1
-        type_counts[issue_type] = type_counts.get(issue_type, 0) + 1
 
+        # 模块（优先从components，fallback到summary解析）
+        components = fields.get('components', []) or []
+        comp_names = []
+        for comp in components:
+            if isinstance(comp, dict) and comp.get('name'):
+                comp_names.append(comp['name'])
+        if comp_names:
+            for cn in comp_names:
+                module_counts[cn] = module_counts.get(cn, 0) + 1
+        else:
+            mod = _module_from_summary(summary)
+            if mod:
+                module_counts[mod] = module_counts.get(mod, 0) + 1
+
+        # 业务领域（customfield_10002）
+        domain_raw = fields.get('customfield_10002', '')
+        if isinstance(domain_raw, str) and domain_raw.strip():
+            domain_counts[domain_raw.strip()] = domain_counts.get(domain_raw.strip(), 0) + 1
+        elif isinstance(domain_raw, dict):
+            domain_val = domain_raw.get('value', '') or domain_raw.get('name', '')
+            if domain_val:
+                domain_counts[domain_val] = domain_counts.get(domain_val, 0) + 1
+
+        # 项目分布
         affect_project = fields.get('customfield_10001', '')
         if affect_project and isinstance(affect_project, str) and affect_project.strip():
             proj = affect_project.strip().split(',')[0].strip()
         else:
             proj = key.split('-')[0] if '-' in key else '未知'
         if proj not in project_counts:
-            project_counts[proj] = {"total": 0, "unresolved": 0}
-        project_counts[proj]["total"] += 1
-        resolved = status in ["已解决", "关闭", "Resolved", "Closed", "Fixed", "Done"]
-        if not resolved:
-            project_counts[proj]["unresolved"] += 1
+            project_counts[proj] = {'total': 0, 'unresolved': 0}
+        project_counts[proj]['total'] += 1
+        if status.lower() not in RESOLVED_STATUSES:
+            project_counts[proj]['unresolved'] += 1
 
-        p_lower = priority.lower()
-        if p_lower in [x.lower() for x in BLOCKING_PRIORITIES]:
-            blocking_issues.append(issue)
-        elif p_lower in [x.lower() for x in CRITICAL_PRIORITIES]:
-            critical_issues.append(issue)
-        elif p_lower in [x.lower() for x in HIGH_PRIORITIES]:
-            high_issues.append(issue)
-        else:
-            other_issues.append(issue)
+        # 关键风险标记
+        must_resolve = fields.get('customfield_10000', '')
+        is_mp = (isinstance(must_resolve, str) and 'MP Block' in must_resolve) or \
+                (isinstance(must_resolve, dict) and 'MP Block' in must_resolve.get('value', ''))
+        issue_labels = fields.get('labels', []) or []
+        is_blk = any('阻塞' in l for l in issue_labels)
+        if is_mp:
+            mp_block_issues.append(issue)
+        if is_blk:
+            blocking_label_issues.append(issue)
 
-    # 判断是否为大规模数据集
-    is_large = total > 2000
-    need_batch = total > 500  # 超过500条建议分批
+        # 按优先级收集严重问题（仅未解决）
+        if status.lower() not in RESOLVED_STATUSES:
+            p_lower = priority.lower()
+            if p_lower in ('blocker', 'block', '阻塞'):
+                blocking_issues.append(issue)
+            elif p_lower in ('critical', '紧急'):
+                critical_issues.append(issue)
 
-    result = f"共查询到 {total} 个问题。\n\n"
+    # ═══════════════════ 构建输出 ═══════════════════
+    lines = []
 
-    # ── 注入 Affect Project 项目名映射 ──
-    if project_names and len(project_names) > 0:
-        result += f'【项目名称映射（⚠️必须使用以下项目名，严禁使用Jira issue key前缀如CN6OS16等）】\n'
-        result += f'以下所有问题的Affect Project（业务项目名）为：{", ".join(project_names)}\n'
-        result += f'请在报告中直接使用这些项目名称（如 CN6、LK7、X6890 等），绝对不要使用Jira项目库键名（如 CN6OS16、CN6OS16AEE、LK7OS163 等）。Jira issue key前缀是开发库名，不是业务项目名。\n\n'
+    # ── 项目名称映射 ──
+    if project_names:
+        lines.append('【项目名称映射】')
+        lines.append(f'业务项目名: {", ".join(project_names)}')
+        lines.append('⚠️ 报告中请直接使用以上业务项目名，不要使用Jira issue key前缀（如CN6OS16等）')
+        lines.append('')
 
-    # 项目分布（全量）
-    result += "【项目分布】（基于全量数据）\n"
+    # ── 数据概览 ──
+    lines.append('【数据概览】')
+    lines.append(f'Bug总数: {total} | 未解决: {len(unresolved_issues)} | 已闭环: {len(resolved_issues)}')
+
+    # 质量指标
+    closed_count = sum(1 for i in resolved_issues if (i.get('fields', {}).get('status', {}) or {}).get('name', '').lower() == 'closed')
+    verified_count = sum(1 for i in resolved_issues if (i.get('fields', {}).get('status', {}) or {}).get('name', '').lower() == 'verified')
+    abandoned_count = sum(1 for i in resolved_issues if (i.get('fields', {}).get('status', {}) or {}).get('name', '').lower() == 'abandoned')
+    fixed_count = sum(1 for i in issues if (i.get('fields', {}).get('status', {}) or {}).get('name', '').lower() == 'fixed')
+    unresolved_mp = sum(1 for i in mp_block_issues if (i.get('fields', {}).get('status', {}) or {}).get('name', '').lower() not in RESOLVED_STATUSES)
+    unresolved_blk = sum(1 for i in blocking_label_issues if (i.get('fields', {}).get('status', {}) or {}).get('name', '').lower() not in RESOLVED_STATUSES)
+
+    closure_rate = round(closed_count / total * 100, 1) if total > 0 else 0
+    resolution_rate = round((closed_count + verified_count) / total * 100, 1) if total > 0 else 0
+    fix_rate = round(fixed_count / total * 100, 1) if total > 0 else 0
+
+    lines.append('')
+    lines.append('【质量指标】')
+    lines.append(f'闭环率(closed/总计): {closed_count}/{total} = {closure_rate}%')
+    lines.append(f'解决率(closed+verified/总计): {closed_count + verified_count}/{total} = {resolution_rate}%')
+    lines.append(f'修复率(fixed/总计): {fixed_count}/{total} = {fix_rate}%')
+    lines.append(f'已闭环: {closed_count} | 待验证: {verified_count} | 已修复: {fixed_count} | 已打回: {abandoned_count}')
+
+    lines.append('')
+    lines.append('【关键风险标记】')
+    lines.append(f'Must_Resolve=MP Block: {len(mp_block_issues)}个 (未解决{unresolved_mp}个)')
+    lines.append(f'标签=阻塞测试: {len(blocking_label_issues)}个 (未解决{unresolved_blk}个)')
+    lines.append('⚠️ 以上为Jira表面不可见的真实风险标记，Priority只是等级分类不代表阻塞测试')
+
+    lines.append('')
+    lines.append('【优先级分布】')
+    prio_parts = []
+    for p in ['Blocker', 'Critical', 'High', 'Major', 'Medium', 'Minor', 'Low', 'Trivial']:
+        if p in priority_counts:
+            prio_parts.append(f'{p}: {priority_counts[p]}')
+    for p, c in sorted(priority_counts.items()):
+        if p not in ('Blocker', 'Critical', 'High', 'Major', 'Medium', 'Minor', 'Low', 'Trivial'):
+            prio_parts.append(f'{p}: {c}')
+    lines.append(' | '.join(prio_parts))
+
+    # ── 项目分布 ──
+    lines.append('')
+    lines.append('【项目分布】')
     for proj, counts in sorted(project_counts.items()):
-        unresolved_str = f"，未解决{counts['unresolved']}个" if counts['unresolved'] > 0 else ""
-        result += f"- {proj}: 共{counts['total']}个{unresolved_str}\n"
-    result += "\n"
+        u = f' (未解决{counts["unresolved"]})' if counts['unresolved'] > 0 else '（已全部解决）'
+        lines.append(f'  {proj}: {counts["total"]}个{u}')
 
-    # 全量统计（全量）
-    result += f"【全量统计】（基于全部{total}个问题的完整计算）\n"
-    result += f"- 状态分布: {', '.join([f'{k}:{v}' for k, v in sorted(status_counts.items())])}\n"
-    result += f"- 优先级分布: {', '.join([f'{k}:{v}' for k, v in sorted(priority_counts.items())])}\n"
-    result += f"- 类型分布: {', '.join([f'{k}:{v}' for k, v in sorted(type_counts.items())])}\n\n"
-
-    # ── 列出Block问题（全量或截断）──
-    if blocking_issues:
-        truncated = len(blocking_issues) > max_block
-        show_count = max_block if truncated else len(blocking_issues)
-        result += f"【高风险问题 - Block优先级】（共{len(blocking_issues)}个{'，仅展示前' + str(show_count) + '个' if truncated else '，全部列出'}）\n"
-        for i, issue in enumerate(blocking_issues[:show_count], 1):
-            fields = issue.get('fields', {})
-            summary = fields.get('summary', '无标题')[:80]
-            status = fields.get('status', {}).get('name', '未知')
-            assignee = fields.get('assignee', {}).get('displayName', '未分配') if fields.get('assignee') else '未分配'
-            result += f"{i}. {issue['key']}: {summary}\n"
-            result += f"   状态: {status}, 负责人: {assignee}\n\n"
-        if truncated:
-            result += f"... 另有 {len(blocking_issues) - max_block} 个Block问题未逐一列出\n\n"
+    # ── 模块分布（Top 15） ──
+    lines.append('')
+    lines.append('【模块分布】')
+    if module_counts:
+        for mod, cnt in sorted(module_counts.items(), key=lambda x: -x[1])[:15]:
+            lines.append(f'  {mod}: {cnt}个')
+        if len(module_counts) > 15:
+            lines.append(f'  ...另有{len(module_counts) - 15}个模块')
     else:
-        result += "【Block优先级问题】无\n\n"
+        lines.append('  无模块数据')
 
-    # ── 列出Critical问题（全量或截断）──
-    if critical_issues:
-        truncated = len(critical_issues) > max_critical
-        show_count = max_critical if truncated else len(critical_issues)
-        result += f"【高风险问题 - Critical优先级】（共{len(critical_issues)}个{'，仅展示前' + str(show_count) + '个' if truncated else '，全部列出'}）\n"
-        for i, issue in enumerate(critical_issues[:show_count], 1):
-            fields = issue.get('fields', {})
-            summary = fields.get('summary', '无标题')[:80]
-            status = fields.get('status', {}).get('name', '未知')
-            assignee = fields.get('assignee', {}).get('displayName', '未分配') if fields.get('assignee') else '未分配'
-            result += f"{i}. {issue['key']}: {summary}\n"
-            result += f"   状态: {status}, 负责人: {assignee}\n\n"
-        if truncated:
-            result += f"... 另有 {len(critical_issues) - max_critical} 个Critical问题未逐一列出\n\n"
+    # ── 业务领域分布 ──
+    lines.append('')
+    lines.append('【业务领域分布】')
+    if domain_counts:
+        for dom, cnt in sorted(domain_counts.items(), key=lambda x: -x[1]):
+            lines.append(f'  {dom}: {cnt}个')
     else:
-        result += "【Critical优先级问题】无\n\n"
+        lines.append('  无业务领域数据')
 
-    # ── 列出High/Major问题（全量或截断）──
-    if high_issues:
-        truncated = len(high_issues) > max_high
-        show_count = max_high if truncated else len(high_issues)
-        result += f"【中优先级问题 - High/Major】（共{len(high_issues)}个{'，仅展示前' + str(show_count) + '个' if truncated else '，全部列出'}）\n"
-        for i, issue in enumerate(high_issues[:show_count], 1):
-            fields = issue.get('fields', {})
-            summary = fields.get('summary', '无标题')[:60]
-            status = fields.get('status', {}).get('name', '未知')
-            assignee = fields.get('assignee', {}).get('displayName', '未分配') if fields.get('assignee') else '未分配'
-            result += f"{i}. {issue['key']}: {summary} [{status}] @{assignee}\n"
-        result += "\n"
-        if truncated:
-            result += f"... 另有 {len(high_issues) - max_high} 个High/Major问题未逐一列出，约占全部问题的{round(len(high_issues)/total*100)}%\n\n"
+    # ═══════════════════ 未解决问题明细 ═══════════════════
+    lines.append('')
+    lines.append('=' * 60)
+    lines.append(f'【未解决问题清单】（共{len(unresolved_issues)}个 — 风险分析核心）')
+    lines.append('=' * 60)
 
-    if other_issues:
-        result += f"【低优先级问题】: 共{len(other_issues)}个（低优问题仅统计，未逐一列出）\n\n"
+    if not unresolved_issues:
+        lines.append('✅ 所有问题均已解决，当前无风险。')
+    else:
+        # 按优先级排序
+        def _sort_key(issue):
+            p = issue.get('fields', {}).get('priority', {}).get('name', '')
+            return PRIO_ORDER.get(p, 99)
+        unresolved_issues.sort(key=_sort_key)
 
-    # 批量分析提示
-    if need_batch:
-        result += f"【批量分析提示】数据量较大（共{total}条），如需按模块/类型/项目做深度挖掘分析，请在提问中指定具体范围。\n\n"
+        # 严重问题列表（Blocker + Critical）
+        severe = [i for i in unresolved_issues if _sort_key(i) <= 1]
+        if severe:
+            lines.append('')
+            lines.append(f'【严重问题 — Blocker/Critical】（共{len(severe)}个）')
+            for issue in severe[:max_detail]:
+                f = issue.get('fields', {})
+                marker, _, _ = _get_risk_markers(f)
+                key = issue.get('key', '')
+                s = f.get('summary', '')[:60]
+                p = f.get('priority', {}).get('name', '')
+                st = f.get('status', {}).get('name', '')
+                a = (f.get('assignee', {}) or {}).get('displayName', '未分配')
+                lines.append(f'  [{p}] {key}{marker} {s} | 状态:{st} | @{a}')
 
-    result += f"⚠️ 以上统计信息基于全部{total}个问题的全量计算，详细列表根据优先级进行了适当压缩以确保AI能有效分析。\n"
-    return result
+        # 高优先级问题（High/Major）
+        high_major = [i for i in unresolved_issues if _sort_key(i) in (2, 3)]
+        if high_major:
+            lines.append('')
+            lines.append(f'【中优先级 — High/Major】（共{len(high_major)}个）')
+            for issue in high_major[:max_detail]:
+                f = issue.get('fields', {})
+                marker, _, _ = _get_risk_markers(f)
+                key = issue.get('key', '')
+                s = f.get('summary', '')[:60]
+                p = f.get('priority', {}).get('name', '')
+                st = f.get('status', {}).get('name', '')
+                lines.append(f'  [{p}] {key}{marker} {s} | {st}')
+
+            if len(high_major) > max_detail:
+                lines.append(f'  ... 另有{len(high_major) - max_detail}个未列出')
+
+        # 其他未解决
+        other = [i for i in unresolved_issues if _sort_key(i) > 3]
+        if other:
+            lines.append('')
+            lines.append(f'【其他未解决】（共{len(other)}个 — Medium及以下）')
+
+        # MP Block + 阻塞测试 汇总
+        high_risk_items = []
+        for issue in unresolved_issues:
+            f = issue.get('fields', {})
+            marker, is_mp, is_blk = _get_risk_markers(f)
+            if is_mp or is_blk:
+                high_risk_items.append((issue, marker))
+        if high_risk_items:
+            lines.append('')
+            lines.append(f'【关键风险条目】（未解决中MP Block + 阻塞测试，共{len(high_risk_items)}个）')
+            lines.append('⚠️ 这些是真正的核心风险项，请重点分析：')
+            lines.append('  🚫MP = Must_Resolve=MP Block | 🧱阻塞 = 标签=阻塞测试')
+            for issue, marker in high_risk_items[:50]:
+                f = issue.get('fields', {})
+                key = issue.get('key', '')
+                s = f.get('summary', '')[:60]
+                p = f.get('priority', {}).get('name', '')
+                st = f.get('status', {}).get('name', '')
+                lines.append(f'  {key}{marker} [{p}] {s} | {st}')
+
+    # ═══════════════════ 已解决问题统计 ═══════════════════
+    lines.append('')
+    lines.append('=' * 60)
+    lines.append(f'【已解决问题明细】（共{len(resolved_issues)}个 — 质量指标参考）')
+    lines.append('=' * 60)
+    if resolved_issues:
+        # 按状态分组
+        from collections import defaultdict
+        by_status = defaultdict(list)
+        for issue in resolved_issues:
+            st = (issue.get('fields', {}).get('status', {}) or {}).get('name', '')
+            by_status[st].append(issue)
+        for st, items in sorted(by_status.items()):
+            lines.append(f'  {st}: {len(items)}个')
+            for issue in items[:20]:
+                f = issue.get('fields', {})
+                key = issue.get('key', '')
+                s = f.get('summary', '')[:40]
+                p = f.get('priority', {}).get('name', '')
+                marker, _, _ = _get_risk_markers(f)
+                lines.append(f'    {key}{marker} [{p}] {s}')
+            if len(items) > 20:
+                lines.append(f'    ... 另有{len(items) - 20}个')
+    else:
+        lines.append('  无已解决问题数据。')
+
+    lines.append('')
+    lines.append('【分析说明】')
+    lines.append('1. 未解决问题 = 风险分析核心，请重点分析其中的严重问题、MP Block、阻塞测试项')
+    lines.append('2. 已解决问题 = 质量指标计算（闭环率/解决率/修复率）')
+    lines.append('3. 模块/领域分布帮助识别系统性风险集中区域')
+    return '\n'.join(lines)
 
 
 def stream_portfolio_analysis(issues_all, issues_unresolved, enhanced_query, sse_queue, system_prompt, max_tokens=16384, project_names=None):
@@ -1059,20 +1228,8 @@ def stream_portfolio_analysis(issues_all, issues_unresolved, enhanced_query, sse
 
     jira_data = format_portfolio_data(priority_sorted, project_names=project_names)
 
-    unresolved_text = ""
-    if issues_unresolved:
-        unresolved_keys = {u['key'] for u in issues_unresolved}
-        unresolved_sorted = [i for i in priority_sorted if i['key'] in unresolved_keys]
-        unresolved_text = f"\n\n【以下为未解决问题明细（共{len(issues_unresolved)}个）】\n"
-        for issue in unresolved_sorted[:50]:
-            fields = issue.get('fields', {})
-            summary = fields.get('summary', '无标题')[:60]
-            priority = fields.get('priority', {}).get('name', '未知')
-            status = fields.get('status', {}).get('name', '未知')
-            unresolved_text += f"- {issue['key']} | {priority} | {status} | {summary}\n"
-
     messages = [
-        {"role": "user", "content": f"用户问题：{enhanced_query}\n\n真实Jira数据：{jira_data}{unresolved_text}"}
+        {"role": "user", "content": f"用户问题：{enhanced_query}\n\n真实Jira数据：\n{jira_data}"}
     ]
 
     full_content = stream_ai_to_queue(
@@ -2065,7 +2222,7 @@ def fetch_all_issues(jql: str, username=None, password=None, url=None, max_fetch
             "jql": jql,
             "startAt": start_at,
             "maxResults": max_results,
-            "fields": "summary,status,priority,issuetype,assignee,created,updated,resolutiondate,resolution,labels,key,customfield_10000,customfield_10001,affectsVersions"
+            "fields": "summary,status,priority,issuetype,assignee,created,updated,resolutiondate,resolution,labels,key,customfield_10000,customfield_10001,customfield_10002,affectsVersions,components"
         }
 
         # 添加调试日志
@@ -2145,6 +2302,10 @@ def fetch_all_issues(jql: str, username=None, password=None, url=None, max_fetch
 
     _log("info", f"共获取到 {len(all_issues)} 条问题")
     return all_issues
+
+# ── 自定义字段常量（如需修改请在此处调整） ──
+BUSINESS_DOMAIN_FIELD = "customfield_10002"  # Business Domain 业务领域
+
 
 # 风险等级识别函数
 def get_risk_level(priority, labels, summary):
@@ -3015,6 +3176,37 @@ def analyze_api():
                         _log("debug", f"验证走势图: created={created} 不在日期范围内 (无resolutiondate)")
 
                 # 构建全量结构化issue对象供前端使用
+                # 提取Components
+                components = fields.get("components", [])
+                comp_names = [c.get("name", "") for c in components if isinstance(c, dict)] if components else []
+                comp_str = ", ".join(comp_names)
+
+                # 提取Business_Domain
+                business_domain = ""
+                raw_domain = fields.get("customfield_10002", "")
+                if isinstance(raw_domain, str):
+                    business_domain = raw_domain.strip()
+                elif isinstance(raw_domain, dict):
+                    business_domain = raw_domain.get("value", "") or raw_domain.get("name", "")
+                if not business_domain:
+                    business_domain = lookup_domain(comp_str, comp_names)
+
+                # 提取Must_Resolve
+                must_resolve = ""
+                raw_must = fields.get("customfield_10000", "")
+                if isinstance(raw_must, str) and "MP Block" in raw_must:
+                    must_resolve = "MP Block"
+                elif isinstance(raw_must, dict) and "MP Block" in raw_must.get("value", ""):
+                    must_resolve = "MP Block"
+                if not must_resolve and any("mp block" in l.lower() for l in labels):
+                    must_resolve = "MP Block"
+
+                # 从summary中提取模块
+                module_from_summary = ""
+                m = re.search(r'【[^】]*】【[^】]*】【[^】]*】【([^】]*)】', summary)
+                if m:
+                    module_from_summary = m.group(1)
+
                 issue_data = {
                     "bug_key": bug_key,
                     "key": bug_key,
@@ -3028,6 +3220,10 @@ def analyze_api():
                     "risk_level": risk_level,
                     "affects_versions": fields.get("affectsVersions", []),
                     "customfield_10001": fields.get("customfield_10001", ""),
+                    "components": comp_str,
+                    "business_domain": business_domain,
+                    "must_resolve": must_resolve,
+                    "module_from_summary": module_from_summary,
                     "is_tos": 'TOS' in bug_key.upper()
                 }
                 issues_list_all.append(issue_data)
@@ -3157,6 +3353,38 @@ def analyze_api():
             except Exception as e:
                 _log("warn", f"共性问题聚类失败: {e}")
 
+            # ===== 模块/领域分布预计算 =====
+            module_distribution = {}
+            domain_distribution = {}
+            mp_block_by_module = {}
+            block_by_module = {}
+            unresolved_statuses = {"open", "in progress", "reopened", "modifying", "submitted", "fixed"}
+
+            for iss in issues_list_all:
+                # 模块分布（所有未解决问题）
+                if iss["status"].lower() not in {"closed", "verified", "abandoned"}:
+                    mod = iss.get("module_from_summary", "") or iss.get("components", "")
+                    if mod:
+                        module_distribution[mod] = module_distribution.get(mod, 0) + 1
+
+                    # 业务领域分布
+                    domain = iss.get("business_domain", "")
+                    if domain:
+                        domain_distribution[domain] = domain_distribution.get(domain, 0) + 1
+
+                    # MP Block按模块分布
+                    if iss.get("must_resolve") == "MP Block":
+                        mp_block_by_module[mod] = mp_block_by_module.get(mod, 0) + 1
+
+                    # 阻塞问题按模块分布
+                    labels_lower = [l.lower() for l in iss.get("labels", [])]
+                    if "block" in iss.get("priority", "").lower() or any("阻塞" in l for l in labels_lower):
+                        block_by_module[mod] = block_by_module.get(mod, 0) + 1
+
+            # 计算闭环率（closed数 / 总问题数）
+            closed_count = sum(1 for iss in issues_list_all if iss["status"].lower() == "closed")
+            closure_rate = round((closed_count / total_all) * 100) if total_all > 0 else 0
+
             # 发送数据更新事件给前端（发送全量数据）
             risk_data = {
                 "project_key": project_key,
@@ -3165,6 +3393,7 @@ def analyze_api():
                 "submission_trend": submission_trend,  # 提交走势图数据
                 "verification_trend": verification_trend,  # 验证走势图数据
                 "resolution_rate": resolution_rate,  # 解决率
+                "closure_rate": closure_rate,  # 闭环率
                 "blocking_label_counts": blocking_label_counts,  # 阻塞问题标签统计
                 "potential_common_issues": potential_common_issues,  # 潜在共性问题
                 "common_clusters": common_clusters,  # tOS库候选共性问题聚类
@@ -3179,7 +3408,12 @@ def analyze_api():
                 "blocking_resolved": blocking_resolved,  # 已解决的阻塞问题数
                 "blocking_unresolved": blocking_total - blocking_resolved,  # 未解决的阻塞问题数
                 "mp_block_total": mp_block_total,  # MP Block问题总数
-                "delivery_risk_total": delivery_risk_total  # 交付风险问题总数
+                "delivery_risk_total": delivery_risk_total,  # 交付风险问题总数
+                # 分布数据
+                "module_distribution": module_distribution,  # 模块分布
+                "domain_distribution": domain_distribution,  # 业务领域分布
+                "mp_block_by_module": mp_block_by_module,  # MP Block按模块分布
+                "block_by_module": block_by_module  # 阻塞问题按模块分布
             }
 
             # 构建未解决问题列表（用于前端风险分析）
@@ -3195,6 +3429,37 @@ def analyze_api():
                 labels = fields.get("labels", [])
                 risk_level = get_risk_level(priority, labels, summary)
 
+                # 提取Components
+                components = fields.get("components", [])
+                comp_names = [c.get("name", "") for c in components if isinstance(c, dict)] if components else []
+                comp_str = ", ".join(comp_names)
+
+                # 提取Business_Domain
+                business_domain = ""
+                raw_domain = fields.get("customfield_10002", "")
+                if isinstance(raw_domain, str):
+                    business_domain = raw_domain.strip()
+                elif isinstance(raw_domain, dict):
+                    business_domain = raw_domain.get("value", "") or raw_domain.get("name", "")
+                if not business_domain:
+                    business_domain = lookup_domain(comp_str, comp_names)
+
+                # 提取Must_Resolve
+                must_resolve = ""
+                raw_must = fields.get("customfield_10000", "")
+                if isinstance(raw_must, str) and "MP Block" in raw_must:
+                    must_resolve = "MP Block"
+                elif isinstance(raw_must, dict) and "MP Block" in raw_must.get("value", ""):
+                    must_resolve = "MP Block"
+                if not must_resolve and any("mp block" in l.lower() for l in labels):
+                    must_resolve = "MP Block"
+
+                # 从summary中提取模块
+                module_from_summary = ""
+                m = re.search(r'【[^】]*】【[^】]*】【[^】]*】【([^】]*)】', summary)
+                if m:
+                    module_from_summary = m.group(1)
+
                 issues_unresolved_list.append({
                     "bug_key": bug_key,
                     "key": bug_key,
@@ -3205,6 +3470,10 @@ def analyze_api():
                     "created": created,
                     "labels": labels,
                     "risk_level": risk_level,
+                    "components": comp_str,
+                    "business_domain": business_domain,
+                    "must_resolve": must_resolve,
+                    "module_from_summary": module_from_summary,
                     "is_tos": 'TOS' in bug_key.upper()
                 })
 

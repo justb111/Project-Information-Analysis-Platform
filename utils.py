@@ -20,7 +20,7 @@ if __name__ == "__main__":
         exit(1)
 
 
-def call_ai_api(messages, system_prompt=None, temperature=0.7, stream=True, max_retries=3, retry_delay=5, max_tokens=None, tools=None, tool_choice=None):
+def call_ai_api(messages, system_prompt=None, temperature=0.7, stream=True, max_retries=3, retry_delay=5, max_tokens=None, tools=None, tool_choice=None, timeout=600):
     """统一的AI API调用函数"""
     import sys
     
@@ -108,7 +108,7 @@ def call_ai_api(messages, system_prompt=None, temperature=0.7, stream=True, max_
     for attempt in range(max_retries):
         try:
             print(f"[AI_DEBUG] AI调用尝试 {attempt+1}/{max_retries}", file=sys.stderr)
-            response = requests.post(url, headers=headers, json=payload, stream=stream, timeout=600)  # 增加到600秒
+            response = requests.post(url, headers=headers, json=payload, stream=stream, timeout=timeout)  # 增加到600秒
             
             last_status_code = response.status_code
             print(f"[AI_DEBUG] AI响应状态码: {response.status_code}", file=sys.stderr)

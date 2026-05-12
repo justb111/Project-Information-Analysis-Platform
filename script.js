@@ -554,6 +554,8 @@ function initAIChat() {
         var message = aiInput.value.trim();
         if (!message) return;
 
+        window.__lastRiskQuery = message;
+
         chatHistory.push({ role: 'user', content: message });
 
         chatMessages.innerHTML += '<div class="message user"><div class="avatar">👤</div><div class="message-content"><p>' + escapeHtml(message) + '</p></div></div>';
@@ -1100,290 +1102,209 @@ function generateDynamicSuggestions(lastAnswer) {
 
 function updateRiskPanel(data) {
     console.log('updateRiskPanel called with data:', data);
-    
+
     try {
-        // 获取面板元素
+        // ===== 获取面板元素 =====
         var riskAnalysisSummary = document.getElementById('riskAnalysisSummary');
         var commonIssuesContainer = document.getElementById('commonIssuesContainer');
-        var riskChartContainer = document.getElementById('riskChartContainer');
-        var statusChartContainer = document.getElementById('statusChartContainer');
         var totalIssuesCount = document.getElementById('totalIssuesCount');
         var blockingIssuesCount = document.getElementById('blockingIssuesCount');
-        var resolutionRate = document.getElementById('resolutionRate');
+        var mpBlockCountEl = document.getElementById('mpBlockCount');
+        var resolutionRateEl = document.getElementById('resolutionRate');
+        var closureRateEl = document.getElementById('closureRate');
         var highRiskCount = document.getElementById('highRiskCount');
         var mediumRiskCount = document.getElementById('mediumRiskCount');
         var lowRiskCount = document.getElementById('lowRiskCount');
         var wholeMachineRisks = document.getElementById('wholeMachineRisks');
         var tosRisks = document.getElementById('tosRisks');
         var labelTagDistribution = document.getElementById('labelTagDistribution');
-
-        console.log('updateRiskPanel: checking key data fields...');
-        console.log('data.submission_trend:', data.submission_trend);
-        console.log('data.verification_trend:', data.verification_trend);
-        console.log('data.blocking_label_counts:', data.blocking_label_counts);
-        console.log('data.common_clusters:', data.common_clusters);
-        console.log('data.potential_common_issues:', data.potential_common_issues);
-        console.log('data.issues_unresolved length:', data.issues_unresolved ? data.issues_unresolved.length : 0);
-        console.log('data.issues length:', data.issues ? data.issues.length : 0);
+        var riskSyncStatus = document.getElementById('riskSyncStatus');
+        var riskAnalysisStatus = document.getElementById('riskAnalysisStatus');
+        var riskUpdateTime = document.getElementById('riskUpdateTime');
+        var riskViewKanbanBtn = document.getElementById('riskViewKanbanBtn');
+        var riskRefreshBtn = document.getElementById('riskRefreshBtn');
+        var riskExportBtn = document.getElementById('riskExportBtn');
 
         if (!riskAnalysisSummary || !commonIssuesContainer) {
             console.error('Missing required elements: riskAnalysisSummary or commonIssuesContainer');
             return;
         }
 
-    var projectKey = data.project_key || '未知项目';
-    // 数据分离：根据用户要求
-    // issues_unresolved: 用于AI分析、风险摘要、标签分布、整机/tOS风险、共性问题、优先级/状态饼图、提交走势图
-    // issues_all: 用于总问题数、阻塞问题数、解决率、验证走势图
-    var issues_all = data.issues || []; // 全量数据
-    var issues_unresolved = data.issues_unresolved || []; // 未解决数据
-    
-    // 使用后端计算的解决率
-    var resolutionRateValue = data.resolution_rate || 0;
-    
-    // 1. 全量数据统计（用于总问题数、解决率等）
-    var totalIssues = data.total_all || issues_all.length;
-    
-    // 2. 优先使用后端计算的统计字段（如果存在）
-    var blockingTotal = data.blocking_total !== undefined ? data.blocking_total : 0; // 总阻塞问题数（包括已解决）
-    var blockingResolved = data.blocking_resolved !== undefined ? data.blocking_resolved : 0; // 已解决的阻塞问题数
-    var blockingUnresolved = data.blocking_unresolved !== undefined ? data.blocking_unresolved : 0; // 未解决的阻塞问题数
-    var mpBlockTotal = data.mp_block_total !== undefined ? data.mp_block_total : 0; // MP Block问题总数
-    var deliveryRiskTotal = data.delivery_risk_total !== undefined ? data.delivery_risk_total : 0; // 交付风险问题总数
-    
-    // 3. 问题分类（用于前端其他逻辑，如显示详情列表）
-    var blockingIssues = []; // 阻塞问题：优先级Block或标签含"阻塞"
-    var mpBlockIssues = []; // MP Block问题：标签含"MP block"或"mp block"
-    var deliveryIssues = []; // 交付风险：标题或标签含"交付"
-    var resolvedIssues = []; // 已解决问题
-    var unresolvedIssues = []; // 未解决问题
-    var severeIssues = []; // 严重问题：阻塞问题 + MP Block问题
-    
-    // 3. 项目类型分类
-    var wholeMachineIssues = []; // 整机项目风险：X系列
-    var tosIssues = []; // tOS系统风险
-    
-    // 4. 风险等级分类
-    var highRiskIssues = [];
-    var mediumRiskIssues = [];
-    var lowRiskIssues = [];
-    
-    // 5. Label/Tag分布统计
-    var labelCounts = {};
+        // ===== 更新状态栏 =====
+        if (riskSyncStatus) {
+            riskSyncStatus.textContent = '已同步';
+            riskSyncStatus.style.color = '#10b981';
+        }
+        if (riskAnalysisStatus) {
+            riskAnalysisStatus.textContent = '分析完成';
+            riskAnalysisStatus.style.color = '#10b981';
+        }
+        if (riskUpdateTime) {
+            riskUpdateTime.textContent = new Date().toLocaleString('zh-CN');
+        }
 
-    // 第一轮：遍历全量数据，填充阻塞问题列表（但统计使用后端数据）
-    issues_all.forEach(function(issue) {
-        var bugKey = issue.bug_key || issue.key || '';
-        var summary = issue.summary || '';
-        var priority = issue.priority || '';
-        var status = issue.status || '';
-        var labels = issue.labels || issue.tags || [];
-        
-        // 转换标签为小写便于匹配
-        var labelsLower = labels.map(function(label) { return label.toLowerCase(); });
-        var summaryLower = summary.toLowerCase();
-        
-        // 判断问题类型（全量统计）
-        var isResolved = status.includes('Resolved') || status.includes('Closed') || 
-                        status.includes('Fixed') || status.includes('已解决') || 
-                        status.includes('关闭');
-        var isBlocking = priority.includes('Block') || priority.includes('阻塞') || 
-                        labelsLower.some(function(label) { return label.includes('阻塞'); });
-        var isMpBlock = labelsLower.some(function(label) { return label.includes('mp block'); });
-        var isDelivery = summaryLower.includes('交付') || 
-                        labelsLower.some(function(label) { return label.includes('交付'); });
-        
-        // 填充问题列表（用于前端展示详情）
-        if (isBlocking) {
-            blockingIssues.push(issue);
+        // 显示操作按钮
+        if (riskViewKanbanBtn) riskViewKanbanBtn.style.display = 'inline-flex';
+        if (riskRefreshBtn) riskRefreshBtn.style.display = 'inline-flex';
+        if (riskExportBtn) riskExportBtn.style.display = 'inline-flex';
+
+        var projectKey = data.project_key || '未知项目';
+        var issues_all = data.issues || [];
+        var issues_unresolved = data.issues_unresolved || [];
+
+        // ===== 后端统计字段 =====
+        var totalIssues = data.total_all || issues_all.length;
+        var blockingTotal = data.blocking_total !== undefined ? data.blocking_total : 0;
+        var blockingResolved = data.blocking_resolved !== undefined ? data.blocking_resolved : 0;
+        var blockingUnresolved = data.blocking_unresolved !== undefined ? data.blocking_unresolved : 0;
+        var mpBlockTotal = data.mp_block_total !== undefined ? data.mp_block_total : 0;
+        var deliveryRiskTotal = data.delivery_risk_total !== undefined ? data.delivery_risk_total : 0;
+        var closureRateVal = data.closure_rate !== undefined ? data.closure_rate : 0;
+        var resolutionRateValue = data.resolution_rate !== undefined ? data.resolution_rate : 0;
+
+        // ===== 分类统计 =====
+        var blockingIssues = [], mpBlockIssues = [], deliveryIssues = [];
+        var resolvedIssues = [], unresolvedIssues = [], severeIssues = [];
+        var wholeMachineIssues = [], tosIssues = [];
+        var highRiskIssues = [], mediumRiskIssues = [], lowRiskIssues = [];
+        var labelCounts = {};
+
+        // 第一轮：全量数据
+        issues_all.forEach(function(issue) {
+            var priority = issue.priority || '';
+            var status = issue.status || '';
+            var labels = issue.labels || issue.tags || [];
+            var labelsLower = labels.map(function(l) { return l.toLowerCase(); });
+            var summary = (issue.summary || '').toLowerCase();
+            var bugKey = issue.bug_key || issue.key || '';
+
+            var isResolved = /resolved|closed|fixed|已解决|关闭/.test(status);
+            var isBlocking = /block|阻塞/.test(priority) || labelsLower.some(function(l) { return l.includes('阻塞'); });
+            var isMpBlock = labelsLower.some(function(l) { return l.includes('mp block'); });
+            var isDelivery = summary.includes('交付') || labelsLower.some(function(l) { return l.includes('交付'); });
+
+            if (isBlocking) blockingIssues.push(issue);
+            if (isMpBlock) mpBlockIssues.push(issue);
+            if (isDelivery) deliveryIssues.push(issue);
+            if (isResolved) resolvedIssues.push(issue); else unresolvedIssues.push(issue);
+            if (isBlocking || isMpBlock) severeIssues.push(issue);
+        });
+
+        // 第二轮：未解决数据
+        issues_unresolved.forEach(function(issue) {
+            var priority = issue.priority || '';
+            var labels = issue.labels || issue.tags || [];
+            var labelsLower = labels.map(function(l) { return l.toLowerCase(); });
+            var summary = (issue.summary || '').toLowerCase();
+            var bugKey = issue.bug_key || issue.key || '';
+
+            var isBlocking = /block|阻塞/.test(priority) || labelsLower.some(function(l) { return l.includes('阻塞'); });
+            var isMpBlock = labelsLower.some(function(l) { return l.includes('mp block'); });
+
+            if (isBlocking) {
+                labels.forEach(function(l) { labelCounts[l] = (labelCounts[l] || 0) + 1; });
+            }
+
+            if (/^X/.test(bugKey) || summary.includes('x系列')) wholeMachineIssues.push(issue);
+            if (bugKey.toUpperCase().includes('TOS')) tosIssues.push(issue);
+
+            if (isBlocking || isMpBlock) highRiskIssues.push(issue);
+            else if (/critical|high|紧急|高/.test(priority)) mediumRiskIssues.push(issue);
+            else lowRiskIssues.push(issue);
+        });
+
+        var blockingCount = blockingUnresolved;
+        var mpBlockCount = mpBlockTotal;
+        var deliveryCount = deliveryRiskTotal;
+
+        // ===== 风险等级 =====
+        var riskLevel = '低', riskLevelText = '风险相对可控';
+        if (blockingCount > 0 || mpBlockCount > 0) {
+            riskLevel = '高';
+            riskLevelText = '存在阻塞问题或MP Block版本卡点';
+        } else if (severeIssues.length > 3) {
+            riskLevel = '中';
+            riskLevelText = '存在多个严重问题';
+        } else if (totalIssues > 10) {
+            riskLevel = '中';
+            riskLevelText = '问题数量较多';
         }
-        if (isMpBlock) {
-            mpBlockIssues.push(issue);
-        }
-        if (isDelivery) {
-            deliveryIssues.push(issue);
-        }
-        if (isResolved) {
-            resolvedIssues.push(issue);
+
+        var conclusion = totalIssues === 0 ? '当前无风险问题，项目状态良好'
+            : blockingCount > 0 ? '存在' + blockingCount + '个阻塞问题，需立即处理'
+            : mpBlockCount > 0 ? '存在' + mpBlockCount + '个MP Block版本卡点，可能影响发布时间'
+            : deliveryCount > 0 ? '存在' + deliveryCount + '个交付风险问题，需重点关注'
+            : '共发现' + totalIssues + '个问题，风险相对可控';
+
+        // ===== 更新风险分析摘要 =====
+        riskAnalysisSummary.innerHTML =
+            '<p><strong>项目：</strong>' + escapeHtml(projectKey) + '</p>' +
+            '<p><strong>总问题数：</strong>' + totalIssues + '个（未解决' + (totalIssues - resolvedIssues.length) + '个）</p>' +
+            '<p><strong>阻塞问题：</strong>' + blockingCount + '个未解决 / 共' + blockingTotal + '个</p>' +
+            '<p><strong>MP Block：</strong>' + mpBlockCount + '个版本卡点</p>' +
+            '<p><strong>交付风险：</strong>' + deliveryCount + '个</p>' +
+            '<p><strong>解决率：</strong>' + resolutionRateValue + '% | <strong>闭环率：</strong>' + closureRateVal + '%</p>' +
+            '<p><strong>风险等级：</strong><span class="risk-' + riskLevel + '">【' + riskLevel + '】</span> - ' + riskLevelText + '</p>' +
+            '<p><strong>结论：</strong>' + conclusion + '</p>';
+
+        // ===== 更新风险等级分布 =====
+        if (highRiskCount) highRiskCount.textContent = highRiskIssues.length;
+        if (mediumRiskCount) mediumRiskCount.textContent = mediumRiskIssues.length;
+        if (lowRiskCount) lowRiskCount.textContent = lowRiskIssues.length;
+
+        // ===== 更新关键指标卡片 =====
+        if (totalIssuesCount) totalIssuesCount.textContent = totalIssues;
+        if (blockingIssuesCount) blockingIssuesCount.textContent = blockingCount;
+        if (mpBlockCountEl) mpBlockCountEl.textContent = mpBlockCount;
+        if (resolutionRateEl) resolutionRateEl.textContent = resolutionRateValue + '%';
+        if (closureRateEl) closureRateEl.textContent = closureRateVal + '%';
+
+        // ===== 更新整机/tOS风险 =====
+        var filterSevere = function(issue) {
+            var labels = issue.labels || issue.tags || [];
+            var p = issue.priority || '';
+            var ll = labels.map(function(l) { return l.toLowerCase(); });
+            return /block|阻塞/.test(p) || ll.some(function(l) { return l.includes('阻塞') || l.includes('mp block'); });
+        };
+        if (wholeMachineRisks) updateRiskKeySection(wholeMachineRisks, wholeMachineIssues.filter(filterSevere));
+        if (tosRisks) updateRiskKeySection(tosRisks, tosIssues.filter(filterSevere));
+
+        // ===== 更新共性问题 =====
+        if (data.common_clusters && Object.keys(data.common_clusters).length > 0) {
+            var ch = '<div class="common-clusters"><strong>📌 tOS库候选共性问题</strong><ul>';
+            var cc = 0;
+            for (var mod in data.common_clusters) {
+                if (cc >= 5) break;
+                var keys = data.common_clusters[mod];
+                ch += '<li><strong>' + escapeHtml(mod) + '</strong>: 出现' + keys.length + '次 (' + escapeHtml(keys.slice(0, 3).join(', ')) + ')</li>';
+                cc++;
+            }
+            ch += '</ul></div>';
+            commonIssuesContainer.innerHTML = ch;
+        } else if (data.potential_common_issues && data.potential_common_issues.length > 0) {
+            updateCommonIssuesFromBackend(commonIssuesContainer, data.potential_common_issues);
         } else {
-            unresolvedIssues.push(issue);
+            updateCommonIssues(commonIssuesContainer, severeIssues, projectKey);
         }
-        if (isBlocking || isMpBlock) {
-            severeIssues.push(issue);
-        }
-    });
 
-    // 第二轮：遍历未解决数据，进行风险分析、分类等
-    issues_unresolved.forEach(function(issue) {
-        var bugKey = issue.bug_key || issue.key || '';
-        var summary = issue.summary || '';
-        var priority = issue.priority || '';
-        var status = issue.status || '';
-        var labels = issue.labels || issue.tags || [];
-        
-        // 转换标签为小写便于匹配
-        var labelsLower = labels.map(function(label) { return label.toLowerCase(); });
-        var summaryLower = summary.toLowerCase();
-        
-        // 判断问题类型（未解决数据）
-        var isBlocking = priority.includes('Block') || priority.includes('阻塞') || 
-                        labelsLower.some(function(label) { return label.includes('阻塞'); });
-        var isMpBlock = labelsLower.some(function(label) { return label.includes('mp block'); });
-        var isDelivery = summaryLower.includes('交付') || 
-                        labelsLower.some(function(label) { return label.includes('交付'); });
-        
-        // 统计label出现次数（仅统计未解决的阻塞问题）
-        if (isBlocking) {
-            labels.forEach(function(label) {
-                labelCounts[label] = (labelCounts[label] || 0) + 1;
-            });
-            blockingIssues.push(issue);
-        }
-        if (isMpBlock) {
-            mpBlockIssues.push(issue);
-        }
-        if (isDelivery) {
-            deliveryIssues.push(issue);
-        }
-        if (isBlocking || isMpBlock) {
-            severeIssues.push(issue);
-        }
-        
-        // 项目类型分类（基于未解决数据）
-        if (bugKey.startsWith('X') || summary.includes('X') || 
-            labelsLower.some(function(label) { return label.includes('x'); })) {
-            wholeMachineIssues.push(issue);
-        }
-        if (bugKey.toUpperCase().includes('TOS')) {
-            tosIssues.push(issue);
-        }
-        
-        // 风险等级初步分类（基于未解决数据）
-        if (isBlocking || isMpBlock) {
-            highRiskIssues.push(issue);
-        } else if (priority.includes('Critical') || priority.includes('High') || 
-                  priority.includes('紧急') || priority.includes('高')) {
-            mediumRiskIssues.push(issue);
-        } else {
-            lowRiskIssues.push(issue);
-        }
-    });
+        // ===== 更新Label/Tag分布 =====
+        var blockingLabelCounts = data.blocking_label_counts || labelCounts;
+        if (labelTagDistribution) updateLabelTagDistribution(blockingLabelCounts);
 
-    // 5. 计算解决率（基于阻塞问题），优先使用后端计算的解决率
-    var resolutionRateValue = data.resolution_rate !== undefined ? data.resolution_rate : (blockingTotal > 0 ? Math.round((blockingResolved / blockingTotal) * 100) : 0);
-    
-    // 6. 计算阻塞问题数量（优先使用后端统计）
-    var blockingCount = blockingUnresolved; // 未解决的阻塞问题数（后端提供）
-    var mpBlockCount = mpBlockTotal; // MP Block问题总数（后端提供）
-    var deliveryCount = deliveryRiskTotal; // 交付风险问题总数（后端提供）
-    var severeCount = blockingUnresolved + mpBlockCount; // 严重问题数 = 未解决阻塞问题 + MP Block问题
-    
-    // 7. 评估风险等级
-    var riskLevel = '低';
-    var riskLevelText = '';
-    if (blockingCount > 0 || mpBlockCount > 0) {
-        riskLevel = '高';
-        riskLevelText = '存在阻塞问题或MP Block版本卡点';
-    } else if (severeCount > 3) {
-        riskLevel = '中';
-        riskLevelText = '存在多个严重问题';
-    } else if (totalIssues > 10) {
-        riskLevel = '中';
-        riskLevelText = '问题数量较多';
-    } else {
-        riskLevel = '低';
-        riskLevelText = '风险相对可控';
-    }
-    
-    // 8. 生成一句话结论
-    var conclusion = '';
-    if (blockingCount > 0) {
-        conclusion = '存在' + blockingCount + '个阻塞问题，需立即处理';
-    } else if (mpBlockCount > 0) {
-        conclusion = '存在' + mpBlockCount + '个MP Block版本卡点，可能影响发布时间';
-    } else if (deliveryCount > 0) {
-        conclusion = '存在' + deliveryCount + '个交付风险问题，需重点关注';
-    } else if (totalIssues === 0) {
-        conclusion = '当前无风险问题，项目状态良好';
-    } else {
-        conclusion = '共发现' + totalIssues + '个问题，风险相对可控';
-    }
-    
-    // 9. 更新风险分析摘要
-    var summaryHtml = '<p><strong>项目：</strong>' + escapeHtml(projectKey) + '</p>';
-    summaryHtml += '<p><strong>总问题数：</strong>' + totalIssues + '个</p>';
-    summaryHtml += '<p><strong>阻塞问题：</strong>' + blockingCount + '个（优先级Block或标签含"阻塞"）</p>';
-    summaryHtml += '<p><strong>MP Block版本卡点：</strong>' + mpBlockCount + '个（可能严重延迟发布时间）</p>';
-    summaryHtml += '<p><strong>交付风险：</strong>' + deliveryCount + '个（标题或标签含"交付"）</p>';
-    summaryHtml += '<p><strong>阻塞问题解决率：</strong>' + resolutionRateValue + '%（已解决' + blockingResolved + '个/共' + blockingTotal + '个阻塞问题）</p>';
-    summaryHtml += '<p><strong>风险等级：</strong><span class="risk-' + riskLevel + '">【' + riskLevel + '】</span> - ' + riskLevelText + '</p>';
-    summaryHtml += '<p><strong>结论：</strong>' + conclusion + '</p>';
-    riskAnalysisSummary.innerHTML = summaryHtml;
-    
-    // 10. 更新风险等级分布
-    highRiskCount.textContent = highRiskIssues.length;
-    mediumRiskCount.textContent = mediumRiskIssues.length;
-    lowRiskCount.textContent = lowRiskIssues.length;
-    
-    // 11. 更新关键指标卡片
-    totalIssuesCount.textContent = totalIssues;
-    blockingIssuesCount.textContent = blockingCount;
-    resolutionRate.textContent = resolutionRateValue + '%';
-    
-    // 12. 更新整机项目风险区域
-    updateRiskKeySection(wholeMachineRisks, wholeMachineIssues.filter(function(issue) {
-        // 只显示严重问题（阻塞或MP Block）
-        var labels = issue.labels || issue.tags || [];
-        var labelsLower = labels.map(function(label) { return label.toLowerCase(); });
-        var priority = issue.priority || '';
-        return priority.includes('Block') || priority.includes('阻塞') || 
-               labelsLower.some(function(label) { return label.includes('阻塞') || label.includes('mp block'); });
-    }));
-    
-    // 13. 更新tOS系统风险区域
-    updateRiskKeySection(tosRisks, tosIssues.filter(function(issue) {
-        // 只显示严重问题（阻塞或MP Block）
-        var labels = issue.labels || issue.tags || [];
-        var labelsLower = labels.map(function(label) { return label.toLowerCase(); });
-        var priority = issue.priority || '';
-        return priority.includes('Block') || priority.includes('阻塞') || 
-               labelsLower.some(function(label) { return label.includes('阻塞') || label.includes('mp block'); });
-    }));
-    
-    // 14. 更新共性问题识别
-    // 首先检查tOS库候选共性问题聚类
-    if (data.common_clusters && Object.keys(data.common_clusters).length > 0) {
-        // 展示tOS库聚类结果
-        let commonHtml = '<div class="common-clusters"><strong>📌 tOS库候选共性问题</strong><ul>';
-        let clusterCount = 0;
-        for (const [module, keys] of Object.entries(data.common_clusters).slice(0, 5)) {
-            clusterCount++;
-            commonHtml += `<li><strong>${escapeHtml(module)}</strong>: 出现${keys.length}次 (${escapeHtml(keys.slice(0,3).join(', '))})</li>`;
-        }
-        commonHtml += '</ul></div>';
-        if (clusterCount === 0) {
-            commonHtml = '<p>暂无候选共性问题</p>';
-        }
-        commonIssuesContainer.innerHTML = commonHtml;
-    } else if (data.potential_common_issues && data.potential_common_issues.length > 0) {
-        // 使用后端识别的共性问题（基于Affect Project字段）
-        updateCommonIssuesFromBackend(commonIssuesContainer, data.potential_common_issues);
-    } else {
-        updateCommonIssues(commonIssuesContainer, severeIssues, projectKey);
-    }
-    
-    // 15. 更新图表（只显示阻塞和严重问题的分布）
-    updateCharts(riskChartContainer, statusChartContainer, severeIssues);
-    
-    // 16. 更新趋势走势图
-    console.log('updateRiskPanel: calling updateTrendCharts with data:', data);
-    updateTrendCharts(data);
-    
-    // 17. 更新Label/Tag分布
-    var blockingLabelCounts = data.blocking_label_counts || labelCounts;
-    updateLabelTagDistribution(blockingLabelCounts);
-    
-    console.log('updateRiskPanel completed successfully');
+        // ===== 渲染4个核心图表 =====
+        renderRiskCharts(severeIssues, mpBlockIssues, blockingIssues, issues_unresolved);
+
+        // ===== 渲染趋势图 =====
+        updateTrendCharts(data);
+
+        // ===== 渲染MP Block趋势图 =====
+        renderMpBlockTrendChart(data, issues_all);
+
+        // ===== 更新9个结论卡片 =====
+        updateRiskConclusions(data, severeIssues, mpBlockIssues, blockingIssues, issues_unresolved,
+            totalIssues, blockingCount, mpBlockCount, resolutionRateValue, closureRateVal, riskLevel, riskLevelText, projectKey);
+
+        console.log('updateRiskPanel completed successfully');
     } catch (error) {
         console.error('Error in updateRiskPanel:', error);
         // 显示错误信息在页面上以便调试
@@ -1407,6 +1328,324 @@ function updateRiskPanel(data) {
         debugDiv.innerHTML = 'Error in updateRiskPanel: ' + error.message;
         debugDiv.style.display = 'block';
     }
+}
+
+/* ====== 风险图表渲染（4个核心图表） ====== */
+function renderRiskCharts(severeIssues, mpBlockIssues, blockingIssues, issues_unresolved) {
+    if (!window.Chart) return;
+
+    // 1. 优先级分布饼图
+    var priorityStats = { Blocker: 0, Critical: 0, Major: 0, Other: 0 };
+    // 2. 状态分布饼图
+    var statusStats = { Open: 0, 'In Progress': 0, Resolved: 0, Reopened: 0 };
+
+    severeIssues.forEach(function(issue) {
+        var p = (issue.priority || '').toLowerCase();
+        var s = (issue.status || '').toLowerCase();
+        if (p.includes('block') || p.includes('阻塞')) priorityStats.Blocker++;
+        else if (p.includes('critical') || p.includes('紧急')) priorityStats.Critical++;
+        else if (p.includes('major') || p.includes('主要')) priorityStats.Major++;
+        else priorityStats.Other++;
+
+        if (s.includes('open') || s.includes('提交')) statusStats.Open++;
+        else if (s.includes('progress') || s.includes('修复中')) statusStats['In Progress']++;
+        else if (s.includes('resolved') || s.includes('已解决')) statusStats.Resolved++;
+        else if (s.includes('reopen') || s.includes('重开')) statusStats.Reopened++;
+        else statusStats['In Progress']++;
+    });
+
+    // 销毁旧chart实例
+    ['priorityChart', 'statusChart', 'mpBlockModuleChart', 'domainChart'].forEach(function(id) {
+        if (window[id]) { window[id].destroy(); window[id] = null; }
+    });
+
+    var pieOpts = {
+        responsive: true, maintainAspectRatio: true,
+        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 6, font: { size: 10 } } } }
+    };
+
+    // Priority Chart
+    var pCtx = document.getElementById('priorityChart');
+    if (pCtx && severeIssues.length > 0) {
+        window.priorityChart = new Chart(pCtx, {
+            type: 'pie',
+            data: {
+                labels: ['Blocker', 'Critical', 'Major', 'Other'],
+                datasets: [{ data: [priorityStats.Blocker, priorityStats.Critical, priorityStats.Major, priorityStats.Other],
+                    backgroundColor: ['#ef4444', '#f97316', '#f59e0b', '#6b7280'] }]
+            },
+            options: pieOpts
+        });
+    } else if (pCtx) {
+        window.priorityChart = new Chart(pCtx, {
+            type: 'pie',
+            data: { labels: ['无数据'], datasets: [{ data: [1], backgroundColor: ['#e5e7eb'] }] },
+            options: pieOpts
+        });
+    }
+
+    // Status Chart
+    var sCtx = document.getElementById('statusChart');
+    if (sCtx && severeIssues.length > 0) {
+        window.statusChart = new Chart(sCtx, {
+            type: 'pie',
+            data: {
+                labels: ['Open', 'In Progress', 'Resolved', 'Reopened'],
+                datasets: [{ data: [statusStats.Open, statusStats['In Progress'], statusStats.Resolved, statusStats.Reopened],
+                    backgroundColor: ['#ef4444', '#3b82f6', '#10b981', '#f59e0b'] }]
+            },
+            options: pieOpts
+        });
+    } else if (sCtx) {
+        window.statusChart = new Chart(sCtx, {
+            type: 'pie',
+            data: { labels: ['无数据'], datasets: [{ data: [1], backgroundColor: ['#e5e7eb'] }] },
+            options: pieOpts
+        });
+    }
+
+    // 3. MP Block模块分布（水平条形图）
+    var mpModMap = {};
+    mpBlockIssues.forEach(function(issue) {
+        var mod = issue.module_from_summary || issue.components || '未归类';
+        mpModMap[mod] = (mpModMap[mod] || 0) + 1;
+    });
+    // 如果没有MP Block数据，改用阻塞问题模块分布
+    if (Object.keys(mpModMap).length === 0) {
+        blockingIssues.forEach(function(issue) {
+            var mod = issue.module_from_summary || issue.components || '未归类';
+            mpModMap[mod] = (mpModMap[mod] || 0) + 1;
+        });
+    }
+    var mpModLabels = Object.keys(mpModMap).sort(function(a, b) { return mpModMap[b] - mpModMap[a]; });
+    var mpModData = mpModLabels.map(function(k) { return mpModMap[k]; });
+
+    var mmCtx = document.getElementById('mpBlockModuleChart');
+    if (mmCtx && mpModLabels.length > 0) {
+        window.mpBlockModuleChart = new Chart(mmCtx, {
+            type: 'bar',
+            data: {
+                labels: mpModLabels,
+                datasets: [{
+                    label: '问题数',
+                    data: mpModData,
+                    backgroundColor: ['#ef4444', '#f97316', '#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#14b8a6']
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: true,
+                indexAxis: 'y',
+                scales: {
+                    x: { beginAtZero: true, grid: { display: false }, ticks: { stepSize: 1 } },
+                    y: { grid: { display: false } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    } else if (mmCtx) {
+        window.mpBlockModuleChart = new Chart(mmCtx, {
+            type: 'bar',
+            data: { labels: ['暂无数据'], datasets: [{ data: [0], backgroundColor: ['#e5e7eb'] }] },
+            options: { responsive: true, maintainAspectRatio: true, indexAxis: 'y', scales: { x: { beginAtZero: true } }, plugins: { legend: { display: false } } }
+        });
+    }
+
+    // 4. 业务领域分布（饼图）
+    var domainMap = {};
+    issues_unresolved.forEach(function(issue) {
+        var d = issue.business_domain || '未归类';
+        domainMap[d] = (domainMap[d] || 0) + 1;
+    });
+    var domainLabels = Object.keys(domainMap).sort(function(a, b) { return domainMap[b] - domainMap[a]; });
+    var domainData = domainLabels.map(function(k) { return domainMap[k]; });
+    var domainColors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#6b7280'];
+
+    var dCtx = document.getElementById('domainChart');
+    if (dCtx && domainLabels.length > 0) {
+        window.domainChart = new Chart(dCtx, {
+            type: 'doughnut',
+            data: {
+                labels: domainLabels,
+                datasets: [{ data: domainData, backgroundColor: domainColors.slice(0, domainLabels.length) }]
+            },
+            options: pieOpts
+        });
+    } else if (dCtx) {
+        window.domainChart = new Chart(dCtx, {
+            type: 'doughnut',
+            data: { labels: ['暂无数据'], datasets: [{ data: [1], backgroundColor: ['#e5e7eb'] }] },
+            options: pieOpts
+        });
+    }
+}
+
+/* ====== MP Block趋势图 ====== */
+function renderMpBlockTrendChart(data, issues_all) {
+    if (!window.Chart) return;
+    var ctx = document.getElementById('mpBlockTrendChart');
+    if (!ctx) return;
+    if (window.mpBlockTrendChart) { window.mpBlockTrendChart.destroy(); window.mpBlockTrendChart = null; }
+
+    // 生成最近15天日期
+    var dates = [], fullDates = [];
+    var today = new Date(); today.setHours(12, 0, 0, 0);
+    for (var i = 14; i >= 0; i--) {
+        var d = new Date(today); d.setDate(d.getDate() - i);
+        var m = (d.getMonth() + 1).toString().padStart(2, '0');
+        var day = d.getDate().toString().padStart(2, '0');
+        fullDates.push(d.getFullYear() + '-' + m + '-' + day);
+        dates.push(m + '-' + day);
+    }
+
+    // 统计MP Block问题按创建日期分布
+    var mpBlockCounts = new Array(15).fill(0);
+    var blockCounts = new Array(15).fill(0);
+    (issues_all || []).forEach(function(issue) {
+        var created = (issue.created || '').substring(0, 10);
+        var idx = fullDates.indexOf(created);
+        if (idx === -1) return;
+        var labels = (issue.labels || []).map(function(l) { return l.toLowerCase(); });
+        var priority = (issue.priority || '').toLowerCase();
+        if (labels.some(function(l) { return l.includes('mp block'); })) mpBlockCounts[idx]++;
+        if (priority.includes('block') || labels.some(function(l) { return l.includes('阻塞'); })) blockCounts[idx]++;
+    });
+
+    window.mpBlockTrendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: [
+                { label: 'MP Block新增', data: mpBlockCounts, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', tension: 0.3, fill: true, pointRadius: 3 },
+                { label: '阻塞问题新增', data: blockCounts, borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.1)', tension: 0.3, fill: true, pointRadius: 3 }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { position: 'top', labels: { boxWidth: 10, font: { size: 10 } } } },
+            scales: {
+                x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 9 } } },
+                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { stepSize: 1 } }
+            }
+        }
+    });
+}
+
+/* ====== 重新分析风险 ====== */
+function reanalyzeRisk() {
+    if (window.__lastRiskQuery) {
+        var input = document.getElementById('aiInput');
+        if (input) {
+            input.value = window.__lastRiskQuery;
+            sendMessage();
+        }
+    } else {
+        alert('请先在AI助手中输入项目名称进行分析');
+    }
+}
+
+/* ====== 导出风险报告 ====== */
+function exportRiskReport() {
+    var panel = document.getElementById('riskPanel');
+    if (!panel) return;
+    var content = panel.innerText || panel.textContent;
+    var blob = new Blob(['项目风险分析报告\n' + new Date().toLocaleString('zh-CN') + '\n\n' + content], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '风险分析报告_' + new Date().toISOString().slice(0, 10) + '.txt';
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+/* ====== 多视角结论卡片 ====== */
+function updateRiskConclusions(data, severeIssues, mpBlockIssues, blockingIssues, issues_unresolved,
+    totalIssues, blockingCount, mpBlockCount, resolutionRateVal, closureRateVal, riskLevel, riskLevelText, projectKey) {
+
+    var cards = [
+        { id: 'conclusionOverall', fn: function() {
+            return '项目【' + escapeHtml(projectKey) + '】风险评级：<strong>' + riskLevel + '</strong>（' + riskLevelText + '）。' +
+                '共' + totalIssues + '个问题，阻塞' + blockingCount + '个，MP Block' + mpBlockCount + '个。' +
+                '解决率' + resolutionRateVal + '%，闭环率' + closureRateVal + '%。';
+        }},
+        { id: 'conclusionMpBlock', fn: function() {
+            if (mpBlockCount === 0) return '当前无MP Block版本卡点问题。';
+            return '共发现 <strong>' + mpBlockCount + '</strong> 个MP Block版本卡点。' +
+                '这些问题是发布时间的关键依赖，必须优先解决。' +
+                '建议逐条确认责任人、排期和解决方案，每日跟踪进展。';
+        }},
+        { id: 'conclusionBlocking', fn: function() {
+            if (blockingCount === 0) return '当前无阻塞测试问题。';
+            return '共 <strong>' + blockingCount + '</strong> 个阻塞测试问题未解决。' +
+                '阻塞问题直接影响测试进度和版本发布质量，建议立即组织攻关。';
+        }},
+        { id: 'conclusionModule', fn: function() {
+            var modMap = {};
+            severeIssues.forEach(function(i) {
+                var m = i.module_from_summary || i.components || '未归类';
+                modMap[m] = (modMap[m] || 0) + 1;
+            });
+            var sorted = Object.keys(modMap).sort(function(a, b) { return modMap[b] - modMap[a]; });
+            if (sorted.length === 0) return '暂无模块分布数据。';
+            var top3 = sorted.slice(0, 3).map(function(m) { return m + '(' + modMap[m] + '个)'; });
+            return '风险集中模块：<strong>' + top3.join('、') + '</strong>。建议重点关注这些模块的代码审查和测试覆盖。';
+        }},
+        { id: 'conclusionDomain', fn: function() {
+            var domMap = {};
+            issues_unresolved.forEach(function(i) {
+                var d = i.business_domain || '未归类';
+                domMap[d] = (domMap[d] || 0) + 1;
+            });
+            var sorted = Object.keys(domMap).sort(function(a, b) { return domMap[b] - domMap[a]; });
+            if (sorted.length === 0) return '暂无业务领域分布数据。';
+            var top3 = sorted.slice(0, 3).map(function(d) { return d + '(' + domMap[d] + '个)'; });
+            return '主要风险领域：<strong>' + top3.join('、') + '</strong>。建议安排对应领域专家参与问题分析。';
+        }},
+        { id: 'conclusionQuality', fn: function() {
+            var totalResolved = data.blocking_resolved || 0;
+            var totalBlock = data.blocking_total || 0;
+            var unresolved = totalIssues - (data.issues || []).filter(function(i) {
+                return /resolved|closed|fixed|已解决|关闭/.test(i.status || '');
+            }).length;
+            return '解决率 <strong>' + resolutionRateVal + '%</strong>' +
+                '（阻塞问题已解决' + totalResolved + '/' + totalBlock + '）' +
+                '，闭环率 <strong>' + closureRateVal + '%</strong>' +
+                '，未解决问题 <strong>' + unresolved + '</strong> 个。' +
+                (resolutionRateVal < 60 ? '解决率偏低，需加速问题修复。' : '');
+        }},
+        { id: 'conclusionTrend', fn: function() {
+            var sub = data.submission_trend || {};
+            var ver = data.verification_trend || {};
+            var dates = Object.keys(sub).sort();
+            if (dates.length < 2) return '趋势数据不足，无法判断。';
+            var recent = dates.slice(-7);
+            var subSum = recent.reduce(function(s, d) { return s + (sub[d] || 0); }, 0);
+            var verSum = recent.reduce(function(s, d) { return s + (ver[d] || 0); }, 0);
+            var subAvg = (subSum / recent.length).toFixed(1);
+            var verAvg = (verSum / recent.length).toFixed(1);
+            return '近7天平均提交 <strong>' + subAvg + '</strong> 个/天，平均解决 <strong>' + verAvg + '</strong> 个/天。' +
+                (subAvg > verAvg ? '提交速度大于解决速度，问题存量在增加，需加大解决力度。' : '解决速度基本覆盖提交速度，存量可控。');
+        }},
+        { id: 'conclusionSuggestion', fn: function() {
+            var items = [];
+            if (mpBlockCount > 0) items.push('MP Block问题逐条确认责任人与排期');
+            if (blockingCount > 0) items.push('组织阻塞问题攻关，打通测试阻塞');
+            if (resolutionRateVal < 60) items.push('提升解决率至60%以上，缩短问题平均修复周期');
+            if (items.length === 0) items.push('当前项目风险可控，继续保持');
+            return items.join('；') + '。';
+        }},
+        { id: 'conclusionAction', fn: function() {
+            var actions = [];
+            if (mpBlockCount > 0) actions.push('立即处理' + mpBlockCount + '个MP Block版本卡点');
+            if (blockingCount > 0) actions.push('打通' + blockingCount + '个阻塞测试问题');
+            actions.push('同步项目团队当前风险状态');
+            if (actions.length > 2) return actions.slice(0, 2).join(' | ') + ' | ...及其他常规行动项。';
+            return actions.join(' | ');
+        }}
+    ];
+
+    cards.forEach(function(card) {
+        var el = document.getElementById(card.id);
+        if (el) el.innerHTML = card.fn();
+    });
 }
 
 // ================ 风险看板 ================
@@ -1867,11 +2106,8 @@ function updateTrendCharts(data) {
     console.log('submissionCtx:', submissionCtx);
     console.log('verificationCtx:', verificationCtx);
 
-    if (!submissionCtx) console.error('submissionTrendChart canvas not found');
-    if (!verificationCtx) console.error('verificationTrendChart canvas not found');
-
-    if (!submissionCtx || !verificationCtx) {
-        console.log('=== updateTrendCharts END (canvas not found) ===');
+    if (!submissionCtx) {
+        console.log('=== updateTrendCharts END (submission canvas not found) ===');
         return;
     }
 
@@ -1956,7 +2192,7 @@ function updateTrendCharts(data) {
     console.log('Sum of submission counts:', submissionCounts.reduce((a, b) => a + b, 0));
     console.log('Sum of verification counts:', verificationCounts.reduce((a, b) => a + b, 0));
 
-    // 更新提交走势图
+    // 更新提交走势图（含提交+解决+闭环3条线）
     if (window.submissionTrendChart) {
         window.submissionTrendChart.destroy();
     }
@@ -1965,70 +2201,84 @@ function updateTrendCharts(data) {
         type: 'line',
         data: {
             labels: dates,
-            datasets: [{
-                label: '提交数量',
-                data: submissionCounts,
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                tension: 0.2,
-                fill: true
-            }]
+            datasets: [
+                {
+                    label: '提交数量',
+                    data: submissionCounts,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    tension: 0.2,
+                    fill: true,
+                    pointRadius: 3
+                },
+                {
+                    label: '解决数量',
+                    data: verificationCounts,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    tension: 0.2,
+                    fill: true,
+                    pointRadius: 3
+                }
+            ]
         },
         options: {
             responsive: true,
             plugins: {
                 legend: {
                     display: true,
-                    position: 'top'
+                    position: 'top',
+                    labels: { boxWidth: 10, font: { size: 10 } }
                 }
             },
             scales: {
+                x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 9 } } },
                 y: {
                     beginAtZero: true,
-                    ticks: {
-                        stepSize: 1
-                    }
+                    ticks: { stepSize: 1 }
                 }
             }
         }
     });
 
-    // 更新验证走势图
-    if (window.verificationTrendChart) {
-        window.verificationTrendChart.destroy();
+    // 更新验证走势图（可选，仅当canvas存在时）
+    if (verificationCtx) {
+        if (window.verificationTrendChart) {
+            window.verificationTrendChart.destroy();
+        }
+
+        window.verificationTrendChart = new Chart(verificationCtx, {
+            type: 'line',
+            data: {
+                labels: dates,
+                datasets: [{
+                    label: '验证数量',
+                    data: verificationCounts,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    tension: 0.2,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                }
+            }
+        });
     }
-
-    window.verificationTrendChart = new Chart(verificationCtx, {
-        type: 'line',
-        data: {
-            labels: dates,
-            datasets: [{
-                label: '验证数量',
-                data: verificationCounts,
-                borderColor: '#10b981',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                tension: 0.2,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'top'
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: {
-                        stepSize: 1
-                    }
-                }
-            }
-        }
-    });
 }
 
 function initCharts() {
@@ -2988,11 +3238,19 @@ function initProgressTab() {
         var formData = new FormData();
         formData.append('file', file);
 
+        var uploadController = new AbortController();
+        var uploadTimeout = setTimeout(function() {
+            uploadController.abort();
+            uploadStatus.textContent = '上传超时，请检查文件大小或稍后重试';
+            uploadStatus.className = 'prog-upload-status error';
+        }, 300000); // 5分钟超时
+
         fetch('/api/progress/upload', {
             method: 'POST',
-            body: formData
+            body: formData,
+            signal: uploadController.signal
         })
-        .then(function(r) { return r.json(); })
+        .then(function(r) { clearTimeout(uploadTimeout); return r.json(); })
         .then(function(result) {
             dashboard.style.display = 'block';
             if (!result.success) {
@@ -3011,6 +3269,8 @@ function initProgressTab() {
             startProgressAnalysis(sessionId);
         })
         .catch(function(err) {
+            clearTimeout(uploadTimeout);
+            if (err.name === 'AbortError') return;
             dashboard.style.display = 'block';
             uploadStatus.textContent = '上传失败: ' + err.message;
             uploadStatus.className = 'prog-upload-status error';
@@ -3037,6 +3297,7 @@ function loadProgressData(sessionId) {
                 uploadStatus.className = 'prog-upload-status error';
                 return;
             }
+
             uploadStatus.textContent = '✅ 看板已加载';
             uploadStatus.className = 'prog-upload-status success';
 
@@ -3049,13 +3310,23 @@ function loadProgressData(sessionId) {
             exportBtn.removeAttribute('disabled');
             exportBtn.setAttribute('data-session', sessionId);
 
-            renderStats(data);
-            renderFilters(data);
-            renderSwimlane(data);
-            renderDpmAll(data);
-            renderRiskPanel(data);
             renderBottomBar(data);
-            renderCharts(data);
+
+            // 新 tab 布局渲染
+            window._progressData = data;
+            // 预填充DPM颜色映射（供各tab使用）
+            _progDpmColorMap = {};
+            (data.task_progress || []).forEach(function(t) {
+                if (t.dpm && !_progDpmColorMap[t.dpm]) {
+                    _progDpmColorMap[t.dpm] = _progColors[Object.keys(_progDpmColorMap).length % _progColors.length];
+                }
+            });
+            renderProgOverview(data);
+            renderProgDPM(data);
+            renderProgProjects(data);
+            renderProgPhases(data);
+            renderProgManpower(data);
+            renderProgAnalysis(data);
 
             // 在AI分析完成前，先填充基础统计数据
             var s = data.summary || {};
@@ -3066,9 +3337,7 @@ function loadProgressData(sessionId) {
             var badgeEl = document.getElementById('progAiBadge');
             if (badgeEl) badgeEl.style.display = 'none';
 
-            showElementById('progStatsRow');
-            showElementById('progFilterBar');
-            showElementById('progMain');
+            showElementById('progTabs');
             showElementById('progBottomBar');
         })
         .catch(function(err) {
@@ -3307,9 +3576,9 @@ function renderLaneSubList(subList, parentName, projectTree) {
                '  <span class="sub-name">' + escapeHtml(sub.name) + '</span>' +
                '  <span class="sub-stage">' + escapeHtml(stage) + '</span>' +
                (startDate || creationTime ? '  <span class="sub-date">' + escapeHtml(startDate || creationTime) + '</span>' : '') +
-               '  <span class="sub-progress">' + Number(progress).toFixed(1) + '%</span>' +
-               '  <span class="sub-deviation">' + (dev >= 0 ? '+' : '') + Number(dev).toFixed(1) + '%</span>' +
-               (effortPlanned > 0 || effortRemaining > 0 ? '  <span class="sub-effort">' + Number(effortPlanned).toFixed(1) + '/' + Number(effortRemaining).toFixed(1) + '人天</span>' : '') +
+               '  <span class="sub-progress">' + Number(progress).toFixed(2) + '%</span>' +
+               '  <span class="sub-deviation">' + (dev >= 0 ? '+' : '') + Number(dev).toFixed(2) + '%</span>' +
+               (effortPlanned > 0 || effortRemaining > 0 ? '  <span class="sub-effort">' + Number(effortPlanned).toFixed(2) + '/' + Number(effortRemaining).toFixed(2) + '人天</span>' : '') +
                (mainPlans ? '  <span class="sub-main-plans" title="' + escapeHtml(mainPlans) + '">' + escapeHtml(mainPlans) + '</span>' : '') +
                '</div>';
     }).join('');
@@ -3337,18 +3606,18 @@ function renderDpmAll(data) {
         totalPlanned += d.planned || 0;
         totalRemaining += d.remaining || 0;
     });
-    var overallRate = totalPlanned > 0 ? ((totalPlanned - totalRemaining) / totalPlanned * 100).toFixed(1) : '0.0';
+    var overallRate = totalPlanned > 0 ? ((totalPlanned - totalRemaining) / totalPlanned * 100).toFixed(2) : '0.0';
 
-    summary.innerHTML = '总计预估 <b>' + totalPlanned.toFixed(1) + '</b> 人天 · 剩余 <b>' + totalRemaining.toFixed(1) + '</b> 人天 · 整体完成率 <b>' + overallRate + '%</b>';
+    summary.innerHTML = '总计预估 <b>' + totalPlanned.toFixed(2) + '</b> 人天 · 剩余 <b>' + totalRemaining.toFixed(2) + '</b> 人天 · 整体完成率 <b>' + overallRate + '%</b>';
 
     table.innerHTML = '<thead><tr>' +
         '<th>#</th><th>DPM负责人</th><th>预估人天</th><th>剩余人天</th><th>完成率</th><th>项目数</th><th>操作</th>' +
         '</tr></thead><tbody>' +
         allDpms.map(function(item, idx) {
             var dpmName = item.dpm || '未知';
-            var planned = (item.planned || 0).toFixed(1);
-            var remaining = (item.remaining || 0).toFixed(1);
-            var completionRate = (item.completion_rate || 0).toFixed(1);
+            var planned = (item.planned || 0).toFixed(2);
+            var remaining = (item.remaining || 0).toFixed(2);
+            var completionRate = (item.completion_rate || 0).toFixed(2);
             var projectCount = item.project_count || 0;
             var dpmEscaped = dpmName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             return '<tr class="prog-manpower-row" data-dpm="' + escapeHtml(dpmName) + '">' +
@@ -3413,9 +3682,9 @@ function renderProgDpmTable(dpmName, projectTree) {
             '<td>' + escapeHtml(sub.stage || '') + '</td>' +
             '<td class="sub-date">' + escapeHtml(startDate || creationTime || '-') + '</td>' +
             '<td class="sub-date">' + escapeHtml(deadline || '-') + '</td>' +
-            '<td>' + Number(progress).toFixed(1) + '%</td>' +
-            '<td class="sub-effort">' + Number(effortPlanned).toFixed(1) + '</td>' +
-            '<td class="sub-effort">' + Number(effortRemaining).toFixed(1) + '</td>' +
+            '<td>' + Number(progress).toFixed(2) + '%</td>' +
+            '<td class="sub-effort">' + Number(effortPlanned).toFixed(2) + '</td>' +
+            '<td class="sub-effort">' + Number(effortRemaining).toFixed(2) + '</td>' +
             '<td style="' + riskStyle + '">' + riskLabel + '</td>' +
             '</tr>';
     });
@@ -3456,7 +3725,7 @@ function renderDpmBlockBody(block, dpmToProjects, projectTree) {
                 specialTasks.map(function(t) {
                     return '<div class="prog-special-task-item">' +
                            '  <span class="task-name">' + escapeHtml(t.name || '未知') + '</span>' +
-                           '  <span class="task-effort">剩余: ' + ((t.remaining_effort || t.remaining || 0).toFixed(1)) + ' 人天</span>' +
+                           '  <span class="task-effort">剩余: ' + ((t.remaining_effort || t.remaining || 0).toFixed(2)) + ' 人天</span>' +
                            '</div>';
                 }).join('') +
                 '</div>';
@@ -3509,9 +3778,9 @@ function renderDpmSubList(subList, parentName, projectTree) {
         return '<div class="prog-dpm-sub-item">' +
                '  <span class="sub-name">' + escapeHtml(sub.name) + '</span>' +
                (startDate || creationTime ? '  <span class="sub-date">' + escapeHtml(startDate || creationTime) + '</span>' : '') +
-               '  <span class="sub-progress">' + Number(progress).toFixed(1) + '%</span>' +
-               '  <span class="sub-deviation">' + (dev >= 0 ? '+' : '') + Number(dev).toFixed(1) + '%</span>' +
-               (effortPlanned > 0 || effortRemaining > 0 ? '  <span class="sub-effort">' + Number(effortPlanned).toFixed(1) + '/' + Number(effortRemaining).toFixed(1) + '人天</span>' : '') +
+               '  <span class="sub-progress">' + Number(progress).toFixed(2) + '%</span>' +
+               '  <span class="sub-deviation">' + (dev >= 0 ? '+' : '') + Number(dev).toFixed(2) + '%</span>' +
+               (effortPlanned > 0 || effortRemaining > 0 ? '  <span class="sub-effort">' + Number(effortPlanned).toFixed(2) + '/' + Number(effortRemaining).toFixed(2) + '人天</span>' : '') +
                '  <span class="sub-risk risk-' + risk + '"></span>' +
                '</div>';
     }).join('');
@@ -3937,6 +4206,1017 @@ function renderCharts(data) {
     }
 
     chartsRow.style.display = hasCharts ? '' : 'none';
+}
+
+// ====================================================================
+// 新 Tab 布局渲染函数（仿参考看板）
+// ====================================================================
+
+var _progChartInstances = {};
+var _progProjState = { filtered: [], currentPage: 1, pageSize: 30, sortKey: 'deviation', sortDir: -1 };
+
+var _progColors = ['#6366f1','#3b82f6','#06b6d4','#22c55e','#a855f7','#f97316','#ef4444','#eab308','#ec4899','#10b981'];
+var _progDpmColorMap = {};
+
+function switchProgTab(name) {
+    document.querySelectorAll('#progressPanel .prog-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('#progressPanel .prog-page').forEach(function(p) { p.classList.remove('active'); });
+    var tab = document.querySelector('#progressPanel .prog-tab[onclick="switchProgTab(\'' + name + '\')"]');
+    if (tab) tab.classList.add('active');
+    var page = document.getElementById('prog-tab-' + name);
+    if (page) page.classList.add('active');
+}
+
+function _progComputeStatus(p) {
+    var prog = p.progress || 0;
+    if (prog >= 100) return '已完成';
+    // 截止日期已过但未完成 → 延期
+    if (p.deadline) {
+        var deadlineDate = new Date(p.deadline);
+        var today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (deadlineDate < today) return '延期';
+    }
+    if (prog > 0) return '进行中';
+    return '待启动';
+}
+
+function _progUniqueProjects(data) {
+    var map = {};
+    (data.project_progress || []).forEach(function(p) {
+        var name = p.project;
+        if (!name) return;
+        var existing = map[name];
+        if (!existing || p.deviation > existing.deviation) {
+            map[name] = {
+                name: name,
+                dpm: p.manager || '',
+                phase: p.phase || '',
+                progress: p.progress || 0,
+                deviation: p.deviation || 0,
+                riskKey: p.risk || 'normal',
+                risk: p.risk_label || '正常',
+                status: _progComputeStatus(p),
+                deadline: p.deadline || '',
+                endDate: p.deadline || '',
+                effortPlanned: p.effort_planned || 0,
+                effortRemaining: p.effort_remaining || 0,
+                tasksCount: p.tasks_count || 0,
+                planned: p.planned || 0,
+                executed: p.executed || 0
+            };
+        }
+    });
+    return Object.values(map);
+}
+
+function _progPhaseCounts(data) {
+    var counts = {};
+    (data.project_progress || []).forEach(function(p) {
+        var ph = p.phase || '其他';
+        counts[ph] = (counts[ph] || 0) + 1;
+    });
+    return counts;
+}
+
+// ---- 总览看板 ----
+function renderProgOverview(data) {
+    var s = data.summary || {};
+    var projects = _progUniqueProjects(data);
+    var total = s.total_projects || 0;
+    var done = projects.filter(function(p) { return p.status === '已完成'; }).length;
+    var active = projects.filter(function(p) { return p.status === '进行中'; }).length;
+    var pending = projects.filter(function(p) { return p.status === '待启动'; }).length;
+    var delayed = projects.filter(function(p) { return p.status === '延期'; }).length;
+    var normal = s.normal || 0;
+    var warning = s.warning || 0;
+    var highRisk = s.high_risk || 0;
+    var health = s.health_rate || 0;
+    var teamSize = s.team_size || 0;
+    var completionRate = total > 0 ? Math.round(done / total * 100) : 0;
+
+    // KPI Cards
+    var kpiData = [
+        { label: '总项目数', value: total, cls: 'total', sub: '含全部状态' },
+        { label: '进行中', value: active, cls: 'active', sub: '当前执行中' },
+        { label: '已完成', value: done, cls: 'done', sub: '完成率 ' + completionRate + '%' },
+        { label: '延期', value: delayed, cls: 'delay', sub: '已过截止日' },
+        { label: '待启动', value: pending, cls: 'pending', sub: '尚未开始' },
+        { label: '正常', value: normal, cls: 'normal', sub: '风险可控' },
+        { label: '预警', value: warning, cls: 'warn', sub: '需关注' },
+        { label: '高风险', value: highRisk, cls: 'high-risk', sub: '需立即介入' },
+        { label: 'DPM人数', value: teamSize, cls: 'dpm', sub: '负责人' },
+        { label: '健康度', value: health + '%', cls: 'health', sub: '健康评分' },
+    ];
+    var kpiHtml = kpiData.map(function(k) {
+        return '<div class="prog-kpi-card ' + k.cls + '">' +
+            '<div class="prog-kpi-label">' + k.label + '</div>' +
+            '<div class="prog-kpi-value">' + k.value + '</div>' +
+            '<div class="prog-kpi-sub">' + k.sub + '</div></div>';
+    }).join('');
+    var kpiEl = document.getElementById('progKpiGrid');
+    if (kpiEl) kpiEl.innerHTML = kpiHtml;
+
+    // Summary Banner
+    var dpmMax = null;
+    var dpmCounts = {};
+    projects.forEach(function(p) {
+        if (p.dpm) dpmCounts[p.dpm] = (dpmCounts[p.dpm] || 0) + 1;
+    });
+    var dpmEntries = Object.entries(dpmCounts).sort(function(a,b) { return b[1] - a[1]; });
+    if (dpmEntries.length > 0) dpmMax = dpmEntries[0];
+
+    var riskProjs = projects.filter(function(p) { return p.riskKey !== 'normal'; })
+        .sort(function(a,b) { return b.deviation - a.deviation; }).slice(0, 3);
+    var riskList = riskProjs.map(function(p) {
+        return '<strong>' + p.name + '</strong>（偏差' + p.deviation.toFixed(2) + '%）';
+    }).join('、');
+
+    var bannerEl = document.getElementById('progSummaryBanner');
+    if (bannerEl) {
+        bannerEl.innerHTML = '📌 <strong>本次汇报共覆盖 ' + total + ' 个项目，' + teamSize + ' 名 DPM</strong>。' +
+            '当前 <span style="color:var(--prog2-green);font-weight:600;">' + done + ' 个项目已完成</span>，' +
+            '<strong>' + active + ' 个项目进行中</strong>，' +
+            (delayed > 0 ? '<span style="color:var(--prog2-orange);font-weight:600;">' + delayed + ' 个项目延期</span>、' : '') +
+            '存在 <span style="color:var(--prog2-yellow);font-weight:600;">' + warning + ' 个预警项目</span>、' +
+            '<span style="color:var(--prog2-red);font-weight:600;">' + highRisk + ' 个高风险项目</span>。' +
+            (dpmMax ? '承接项目最多的 DPM 为 <strong style="color:var(--prog2-purple);">' + dpmMax[0] + '</strong>（' + dpmMax[1] + ' 个项目）。' : '') +
+            '当前最需关注的风险项目：' + (riskList || '<span style="color:var(--prog2-green);font-weight:600;">暂无高风险</span>') + '。';
+    }
+
+    // Destroy old overview charts
+    ['progStatusChart','progRiskChart','progDpmChart','progRiskTopChart'].forEach(function(k) {
+        if (_progChartInstances[k]) { _progChartInstances[k].destroy(); delete _progChartInstances[k]; }
+    });
+
+    // Status pie chart
+    var statusCtx = document.getElementById('progStatusChart');
+    if (statusCtx) {
+        var statusCounts = {};
+        projects.forEach(function(p) { statusCounts[p.status] = (statusCounts[p.status] || 0) + 1; });
+        _progChartInstances.progStatusChart = new Chart(statusCtx.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: Object.keys(statusCounts),
+                datasets: [{ data: Object.values(statusCounts),
+                    backgroundColor: ['#22c55e','#3b82f6','#f97316','#94a3b8'],
+                    borderWidth: 2, borderColor: '#1a1d27' }]
+            },
+            options: { responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'right', labels: { color: '#e2e8f0', boxWidth: 12, font: { size: 11 } } } } }
+        });
+    }
+
+    // Risk pie chart
+    var riskCtx = document.getElementById('progRiskChart');
+    if (riskCtx) {
+        _progChartInstances.progRiskChart = new Chart(riskCtx.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: ['正常(' + normal + ')', '预警(' + warning + ')', '高风险(' + highRisk + ')'],
+                datasets: [{ data: [normal, warning, highRisk],
+                    backgroundColor: ['#22c55e','#eab308','#ef4444'],
+                    borderWidth: 2, borderColor: '#1a1d27' }]
+            },
+            options: { responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'right', labels: { color: '#e2e8f0', boxWidth: 12, font: { size: 11 } } } } }
+        });
+    }
+
+    // DPM bar chart
+    var dpmCtx = document.getElementById('progDpmChart');
+    if (dpmCtx) {
+        var dpmList = Object.entries(dpmCounts).filter(function(e) { return e[0]; }).sort(function(a,b) { return b[1]-a[1]; });
+        _progChartInstances.progDpmChart = new Chart(dpmCtx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: dpmList.map(function(e) { return e[0]; }),
+                datasets: [{
+                    label: '承接项目数', data: dpmList.map(function(e) { return e[1]; }),
+                    backgroundColor: dpmList.map(function(e, i) { return _progColors[i % _progColors.length]; }),
+                    borderRadius: 6
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                plugins: { legend: { display: false } },
+                scales: { x: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2d3e' } },
+                    y: { ticks: { color: '#e2e8f0' }, grid: { color: 'rgba(0,0,0,0)' } } } }
+        });
+    }
+
+    // Top risk chart
+    var topCtx = document.getElementById('progRiskTopChart');
+    if (topCtx) {
+        var riskProjsAll = projects.filter(function(p) { return p.riskKey !== 'normal' && p.deviation > 0; })
+            .sort(function(a,b) { return b.deviation - a.deviation; }).slice(0, 12);
+        if (riskProjsAll.length > 0) {
+            _progChartInstances.progRiskTopChart = new Chart(topCtx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: riskProjsAll.map(function(p) { return p.name.length > 16 ? p.name.slice(0,16)+'…' : p.name; }),
+                    datasets: [{
+                        label: '进度偏差率',
+                        data: riskProjsAll.map(function(p) { return p.deviation.toFixed(2); }),
+                        backgroundColor: riskProjsAll.map(function(p) {
+                            return p.riskKey === 'high' ? 'rgba(239,68,68,0.7)' : 'rgba(234,179,8,0.7)';
+                        }),
+                        borderRadius: 4
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                    plugins: { legend: { display: false },
+                        tooltip: { callbacks: { label: function(ctx) { return ' 偏差 ' + ctx.raw + '%'; } } } },
+                    scales: {
+                        x: { ticks: { color: '#94a3b8', callback: function(v) { return v+'%'; } }, grid: { color: '#2a2d3e' } },
+                        y: { ticks: { color: '#e2e8f0', font: { size: 11 } }, grid: { color: 'rgba(0,0,0,0)' } }
+                    } }
+            });
+        }
+    }
+
+    // Risk table (overview)
+    var riskTableBody = document.getElementById('progRiskTableBody');
+    if (riskTableBody) {
+        var riskProjects = projects.filter(function(p) { return p.riskKey !== 'normal'; })
+            .sort(function(a,b) { return b.deviation - a.deviation; });
+        riskTableBody.innerHTML = riskProjects.map(function(p) {
+            var riskCls = p.riskKey === 'high' ? 'badge2-risk' : 'badge2-warn';
+            var riskIcon = p.riskKey === 'high' ? '🔴' : '🟡';
+            var statusCls = p.status === '已完成' ? 'badge2-done' : p.status === '进行中' ? 'badge2-active' : p.status === '待启动' ? 'badge2-pending' : 'badge2-delay';
+            var statusIcon = p.status === '已完成' ? '✅' : p.status === '进行中' ? '🔵' : p.status === '待启动' ? '⏳' : '⚠️';
+            var progPct = Math.min(100, p.progress).toFixed(2);
+            return '<tr>' +
+                '<td style="font-size:12px;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + p.name + '">' + p.name + '</td>' +
+                '<td><span style="color:' + (_progDpmColorMap[p.dpm] || '#94a3b8') + ';font-weight:600;">' + p.dpm + '</span></td>' +
+                '<td><div class="prog2-wrap"><div class="prog2-bg"><div class="prog2-fill" style="width:' + progPct + '%;background:#3b82f6;"></div></div><span class="prog2-text">' + progPct + '%</span></div></td>' +
+                '<td>' + Math.min(100, (p.deviation + p.progress)).toFixed(2) + '%</td>' +
+                '<td style="color:' + (p.deviation > 30 ? '#ef4444' : p.deviation > 15 ? '#eab308' : '#22c55e') + ';font-weight:600;">' + p.deviation.toFixed(2) + '%</td>' +
+                '<td><span class="badge2 ' + statusCls + '">' + statusIcon + ' ' + p.status + '</span></td>' +
+                '<td><span class="badge2 ' + riskCls + '">' + riskIcon + ' ' + p.risk + '</span></td>' +
+                '<td style="font-size:12px;color:var(--prog2-muted);">' + (p.endDate || '-') + '</td>' +
+                '</tr>';
+        }).join('');
+    }
+}
+
+// ---- DPM 视图 ----
+function renderProgDPM(data) {
+    // 使用 task_progress 按 DPM 独立统计（不按项目聚合）
+    var tasks = data.task_progress || [];
+    var dpmMap = {};
+    tasks.forEach(function(t) {
+        var dpm = t.dpm || '未知';
+        if (!dpmMap[dpm]) dpmMap[dpm] = { tasks: 0, done: 0, active: 0, delayed: 0, risk: 0, parentProjects: {}, phases: {} };
+        dpmMap[dpm].tasks++;
+        if (t.parent_project) dpmMap[dpm].parentProjects[t.parent_project] = true;
+        if (t.phase) dpmMap[dpm].phases[t.phase] = (dpmMap[dpm].phases[t.phase] || 0) + 1;
+        var status = _progComputeStatus({ progress: t.progress || 0, deadline: t.deadline || '' });
+        if (status === '已完成') dpmMap[dpm].done++;
+        else if (status === '延期') dpmMap[dpm].delayed++;
+        else if (status === '进行中') dpmMap[dpm].active++;
+        if (t.risk !== 'normal') dpmMap[dpm].risk++;
+    });
+
+    // DPM remaining from remaining_effort_all
+    var dpmRemain = {};
+    (data.remaining_effort_all || []).forEach(function(e) {
+        dpmRemain[e.dpm] = e.remaining || 0;
+    });
+
+    var dpms = Object.keys(dpmMap).filter(function(d) { return d && d !== '未知'; });
+    dpms.sort(function(a,b) { return (dpmRemain[b] || 0) - (dpmRemain[a] || 0); });
+
+    // Assign colors
+    dpms.forEach(function(d, i) { _progDpmColorMap[d] = _progDpmColorMap[d] || _progColors[i % _progColors.length]; });
+
+    var gridEl = document.getElementById('progDpmGrid');
+    if (gridEl) {
+        gridEl.innerHTML = dpms.map(function(dpm) {
+            var info = dpmMap[dpm];
+            var color = _progDpmColorMap[dpm] || '#6366f1';
+            var pct = info.tasks > 0 ? Math.round(info.done / info.tasks * 100) : 0;
+            var remain = dpmRemain[dpm] || 0;
+            return '<div class="prog-dpm-card" onclick="openProgDpmModal(\'' + dpm.replace(/'/g, "\\'") + '\')">' +
+                '<div class="prog-dpm-header">' +
+                '<div class="prog-dpm-avatar" style="background:' + color + '">' + dpm[0] + '</div>' +
+                '<div><div class="prog-dpm-name">' + dpm + '</div>' +
+                '<div class="prog-dpm-count">承接 ' + info.tasks + ' 个任务</div></div></div>' +
+                '<div class="prog-dpm-stats">' +
+                '<div class="prog-dpm-stat"><div class="prog-dpm-stat-val" style="color:#22c55e">' + info.done + '</div><div class="prog-dpm-stat-label">已完成</div></div>' +
+                '<div class="prog-dpm-stat"><div class="prog-dpm-stat-val" style="color:#3b82f6">' + info.active + '</div><div class="prog-dpm-stat-label">进行中</div></div>' +
+                (info.delayed > 0 ? '<div class="prog-dpm-stat"><div class="prog-dpm-stat-val" style="color:#f97316">' + info.delayed + '</div><div class="prog-dpm-stat-label">延期</div></div>' : '') +
+                '<div class="prog-dpm-stat"><div class="prog-dpm-stat-val" style="color:' + (info.risk > 0 ? '#ef4444' : '#22c55e') + '">' + info.risk + '</div><div class="prog-dpm-stat-label">风险项目</div></div>' +
+                '</div>' +
+                '<div class="prog-dpm-progress">' +
+                '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--prog2-muted);margin-bottom:3px;"><span>整体完成率</span><span>' + pct + '%</span></div>' +
+                '<div class="prog-dpm-progress-bar-bg"><div class="prog-dpm-progress-bar-fill" style="width:' + pct + '%;background:' + color + ';"></div></div></div>' +
+                '<div style="margin-top:8px;font-size:11px;color:var(--prog2-muted);">剩余人力需求：<span style="color:' + color + ';font-weight:600;">' + remain.toFixed(2) + '</span></div>' +
+                '</div>';
+        }).join('') || '<div style="text-align:center;padding:2rem;color:var(--prog2-muted);">暂无DPM数据</div>';
+    }
+
+    // DPM remaining chart
+    var remainCtx = document.getElementById('progDpmRemainChart');
+    if (remainCtx) {
+        if (_progChartInstances.progDpmRemainChart) { _progChartInstances.progDpmRemainChart.destroy(); }
+        var sortedDpms = Object.entries(dpmRemain).filter(function(e) { return e[0] && e[0] !== 'nan'; }).sort(function(a,b) { return b[1] - a[1]; });
+        _progChartInstances.progDpmRemainChart = new Chart(remainCtx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: sortedDpms.map(function(d) { return d[0]; }),
+                datasets: [{
+                    label: '剩余人力需求', data: sortedDpms.map(function(d) { return d[1].toFixed(2); }),
+                    backgroundColor: sortedDpms.map(function(d) { return _progDpmColorMap[d[0]] || '#6366f1'; }),
+                    borderRadius: 6
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { x: { ticks: { color: '#e2e8f0' }, grid: { color: 'rgba(0,0,0,0)' } },
+                    y: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2d3e' } } } }
+        });
+    }
+}
+
+// ---- DPM 详情弹窗（按阶段分组） ----
+function openProgDpmModal(dpmName) {
+    var data = window._progressData;
+    if (!data) return;
+    var tasks = data.task_progress || [];
+    var dpTasks = tasks.filter(function(t) { return t.dpm === dpmName; });
+    var color = _progDpmColorMap[dpmName] || '#6366f1';
+
+    // 按阶段分组
+    var phaseMap = {};
+    dpTasks.forEach(function(t) {
+        var phase = t.phase || '其他';
+        if (!phaseMap[phase]) phaseMap[phase] = { tasks: [], count: 0, done: 0, active: 0, delayed: 0, risk: 0 };
+        phaseMap[phase].tasks.push(t);
+        phaseMap[phase].count++;
+        var st = _progComputeStatus({ progress: t.progress || 0, deadline: t.deadline || '' });
+        if (st === '已完成') phaseMap[phase].done++;
+        else if (st === '延期') phaseMap[phase].delayed++;
+        else if (st === '进行中') phaseMap[phase].active++;
+        if (t.risk !== 'normal') phaseMap[phase].risk++;
+    });
+    var phases = Object.keys(phaseMap).sort();
+
+    // 汇总统计
+    var total = dpTasks.length;
+    var done = dpTasks.filter(function(t) { return _progComputeStatus({ progress: t.progress || 0, deadline: t.deadline || '' }) === '已完成'; }).length;
+    var active = dpTasks.filter(function(t) { var s = _progComputeStatus({ progress: t.progress || 0, deadline: t.deadline || '' }); return s === '进行中'; }).length;
+    var delayed = dpTasks.filter(function(t) { var s = _progComputeStatus({ progress: t.progress || 0, deadline: t.deadline || '' }); return s === '延期'; }).length;
+    var highCnt = dpTasks.filter(function(t) { return t.risk === 'high'; }).length;
+    var warnCnt = dpTasks.filter(function(t) { return t.risk === 'warning'; }).length;
+
+    var overlay = document.getElementById('progDpmDetailOverlay');
+    var content = document.getElementById('progDpmDetailContent');
+    if (!overlay || !content) return;
+
+    var html = '<div class="prog-modal-header">' +
+        '<span class="prog-modal-title"><span style="color:' + color + '">● ' + dpmName + '</span> — 任务详情（按阶段分类）</span>' +
+        '<button class="prog-modal-close" onclick="document.getElementById(\'progDpmDetailOverlay\').style.display=\'none\'">✕</button></div>' +
+        '<div class="prog-modal-body">' +
+        '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px;">' +
+        '<div style="background:var(--prog2-card2);border-radius:6px;padding:10px;text-align:center;"><div style="font-size:20px;font-weight:700;color:' + color + '">' + total + '</div><div style="font-size:10px;color:var(--prog2-muted)">总任务</div></div>' +
+        '<div style="background:var(--prog2-card2);border-radius:6px;padding:10px;text-align:center;"><div style="font-size:20px;font-weight:700;color:#22c55e">' + done + '</div><div style="font-size:10px;color:var(--prog2-muted)">已完成</div></div>' +
+        '<div style="background:var(--prog2-card2);border-radius:6px;padding:10px;text-align:center;"><div style="font-size:20px;font-weight:700;color:#3b82f6">' + active + '</div><div style="font-size:10px;color:var(--prog2-muted)">进行中</div></div>' +
+        '<div style="background:var(--prog2-card2);border-radius:6px;padding:10px;text-align:center;"><div style="font-size:20px;font-weight:700;color:#f97316">' + delayed + '</div><div style="font-size:10px;color:var(--prog2-muted)">延期</div></div>' +
+        '<div style="background:var(--prog2-card2);border-radius:6px;padding:10px;text-align:center;"><div style="font-size:20px;font-weight:700;color:#ef4444">' + highCnt + '</div><div style="font-size:10px;color:var(--prog2-muted)">高风险</div></div>' +
+        '<div style="background:var(--prog2-card2);border-radius:6px;padding:10px;text-align:center;"><div style="font-size:20px;font-weight:700;color:' + color + '">' + warnCnt + '</div><div style="font-size:10px;color:var(--prog2-muted)">预警</div></div>' +
+        '</div>';
+
+    // 按阶段分组展示
+    phases.forEach(function(phase) {
+        var ph = phaseMap[phase];
+        html += '<div style="margin-bottom:16px;background:var(--prog2-card2);border-radius:8px;padding:12px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+            '<span style="font-weight:600;font-size:13px;">' + phase + '</span>' +
+            '<span style="font-size:11px;color:var(--prog2-muted);">共 ' + ph.count + ' 个任务 | 已完成 ' + ph.done + ' | 进行中 ' + ph.active + (ph.delayed > 0 ? ' | 延期 ' + ph.delayed : '') + ' | 风险 ' + ph.risk + '</span></div>' +
+            '<table style="width:100%;border-collapse:collapse;font-size:11px;">' +
+            '<thead><tr style="color:var(--prog2-muted);font-weight:600;">' +
+            '<th style="padding:6px 8px;text-align:left;">项目</th>' +
+            '<th style="padding:6px 8px;text-align:left;">计划名称</th>' +
+            '<th style="padding:6px 8px;text-align:left;">进度</th>' +
+            '<th style="padding:6px 8px;text-align:left;">偏差率</th>' +
+            '<th style="padding:6px 8px;text-align:left;">状态</th>' +
+            '<th style="padding:6px 8px;text-align:left;">风险</th>' +
+            '</tr></thead><tbody>';
+
+        ph.tasks.slice().sort(function(a, b) {
+            var aR = a.risk === 'high' ? 3 : a.risk === 'warning' ? 2 : 1;
+            var bR = b.risk === 'high' ? 3 : b.risk === 'warning' ? 2 : 1;
+            return bR - aR || Math.abs(b.deviation) - Math.abs(a.deviation);
+        }).forEach(function(t) {
+            var tStatus = _progComputeStatus({ progress: t.progress || 0, deadline: t.deadline || '' });
+            var tRiskCls = t.risk === 'high' ? 'badge2-risk' : t.risk === 'warning' ? 'badge2-warn' : 'badge2-normal';
+            var tStatusCls = tStatus === '已完成' ? 'badge2-done' : tStatus === '进行中' ? 'badge2-active' : tStatus === '延期' ? 'badge2-delay' : 'badge2-pending';
+            html += '<tr style="border-top:1px solid var(--prog2-border);">' +
+                '<td style="padding:6px 8px;">' + (t.parent_project || t.name) + '</td>' +
+                '<td style="padding:6px 8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + (t.plan_name || '') + '">' + (t.plan_name || '-') + '</td>' +
+                '<td style="padding:6px 8px;">' + Number(t.progress || 0).toFixed(2) + '%</td>' +
+                '<td style="padding:6px 8px;color:' + (Math.abs(t.deviation) >= 30 ? '#ef4444' : Math.abs(t.deviation) >= 15 ? '#eab308' : '#22c55e') + ';font-weight:600;">' + Number(t.deviation || 0).toFixed(2) + '%</td>' +
+                '<td style="padding:6px 8px;"><span class="badge2 ' + tStatusCls + '">' + tStatus + '</span></td>' +
+                '<td style="padding:6px 8px;"><span class="badge2 ' + tRiskCls + '">' + (t.risk === 'high' ? '高风险' : t.risk === 'warning' ? '预警' : '正常') + '</span></td>' +
+                '</tr>';
+        });
+        html += '</tbody></table></div>';
+    });
+
+    html += '</div>';
+    content.innerHTML = html;
+    overlay.style.display = 'flex';
+}
+
+// ---- 项目列表 ----
+function renderProgProjects(data) {
+    // 按(父级项目, DPM)分组，每个组 = 一个父级行
+    var groupMap = {};
+    (data.task_progress || []).forEach(function(t) {
+        var key = (t.parent_project || '未分组') + '\t' + (t.dpm || '未知');
+        if (!groupMap[key]) {
+            groupMap[key] = { parent_project: t.parent_project || '未分组', dpm: t.dpm || '未知', children: [] };
+        }
+        groupMap[key].children.push(t);
+    });
+
+    var groups = [];
+    Object.keys(groupMap).forEach(function(key) {
+        var g = groupMap[key];
+        var ch = g.children;
+        var n = ch.length;
+        var sumProg = 0, sumDev = 0, sumRem = 0, sumPlan = 0;
+        ch.forEach(function(c) {
+            sumProg += c.progress;
+            sumDev += c.deviation;
+            sumRem += c.effort_remaining;
+            sumPlan += c.effort_planned;
+        });
+        var avgProg = n > 0 ? sumProg / n : 0;
+        var avgDev = n > 0 ? sumDev / n : 0;
+
+        var allDone = ch.every(function(c) { return c.progress >= 100; });
+        var anyOverdue = ch.some(function(c) { return c.progress < 100 && c.deadline && new Date(c.deadline) < new Date(); });
+        var hasStarted = ch.some(function(c) { return c.progress > 0; });
+        var status = allDone ? '已完成' : (anyOverdue ? '延期' : (hasStarted ? '进行中' : '待启动'));
+
+        var riskKey = Math.abs(avgDev) >= 30 ? 'high' : (Math.abs(avgDev) >= 15 ? 'warning' : 'normal');
+
+        groups.push({
+            name: g.parent_project,
+            dpm: g.dpm,
+            progress: Math.round(avgProg * 100) / 100,
+            deviation: Math.round(avgDev * 100) / 100,
+            riskKey: riskKey,
+            risk: riskKey === 'high' ? '高风险' : riskKey === 'warning' ? '预警' : '正常',
+            status: status,
+            effortRemaining: Math.round(sumRem * 100) / 100,
+            effortPlanned: Math.round(sumPlan * 100) / 100,
+            _children: ch,
+            _taskCount: n
+        });
+    });
+
+    groups.sort(function(a, b) { return Math.abs(b.deviation) - Math.abs(a.deviation); });
+
+    _progProjState.groups = groups;
+    _progProjState.filtered = groups.slice();
+    _progProjState.currentPage = 1;
+    _progProjState.sortKey = 'deviation';
+    _progProjState.sortDir = -1;
+
+    // DPM filter
+    var dpmFilter = document.getElementById('dpmFilter');
+    if (dpmFilter) {
+        var dpms = {};
+        groups.forEach(function(g) { if (g.dpm) dpms[g.dpm] = true; });
+        dpmFilter.innerHTML = '<option value="">全部 DPM</option>';
+        Object.keys(dpms).sort().forEach(function(d) {
+            var o = document.createElement('option');
+            o.value = d; o.textContent = d; dpmFilter.appendChild(o);
+        });
+        dpmFilter.onchange = filterProjTable;
+    }
+
+    // Status filter
+    var statusFilter = document.getElementById('statusFilter');
+    if (statusFilter) {
+        var statusOrder = ['进行中', '延期', '已完成', '待启动'];
+        statusFilter.innerHTML = '<option value="">全部状态</option>';
+        statusOrder.forEach(function(s) {
+            var o = document.createElement('option');
+            o.value = s; o.textContent = s; statusFilter.appendChild(o);
+        });
+        statusFilter.onchange = filterProjTable;
+    }
+
+    // Risk filter
+    var riskFilter = document.getElementById('riskFilter2');
+    if (riskFilter) { riskFilter.onchange = filterProjTable; }
+
+    // Search
+    var searchInput = document.getElementById('projSearch');
+    if (searchInput) { searchInput.oninput = filterProjTable; searchInput.value = ''; }
+
+    window._projData = groups;
+    filterProjTable();
+}
+
+function filterProjTable() {
+    var all = window._projData || [];
+    var qEl = document.getElementById('projSearch');
+    var dpmEl = document.getElementById('dpmFilter');
+    var statusEl = document.getElementById('statusFilter');
+    var riskEl = document.getElementById('riskFilter2');
+    var q = (qEl ? qEl.value : '').toLowerCase();
+    var dpm = dpmEl ? dpmEl.value : '';
+    var status = statusEl ? statusEl.value : '';
+    var risk = riskEl ? riskEl.value : '';
+
+    var filtered = all.filter(function(p) {
+        if (dpm && p.dpm !== dpm) return false;
+        if (status && p.status !== status) return false;
+        if (risk) {
+            if (risk === '高风险' && p.riskKey !== 'high') return false;
+            if (risk === '预警' && p.riskKey !== 'warning') return false;
+            if (risk === '正常' && p.riskKey !== 'normal') return false;
+        }
+        if (q) {
+            // 搜索父级项目名 或 子任务名/计划名
+            if (p.name && p.name.toLowerCase().indexOf(q) !== -1) return true;
+            if (p._children && p._children.some(function(c) {
+                return (c.name && c.name.toLowerCase().indexOf(q) !== -1) ||
+                       (c.plan_name && c.plan_name.toLowerCase().indexOf(q) !== -1);
+            })) return true;
+            return false;
+        }
+        return true;
+    });
+
+    _progProjState.filtered = filtered;
+    _progProjState.currentPage = 1;
+    renderProjTable();
+}
+
+function sortProjTable(key) {
+    if (_progProjState.sortKey === key) {
+        _progProjState.sortDir = -_progProjState.sortDir;
+    } else {
+        _progProjState.sortKey = key;
+        _progProjState.sortDir = -1;
+    }
+    document.querySelectorAll('#projTable th').forEach(function(th) {
+        th.classList.remove('sort-asc', 'sort-desc');
+    });
+    renderProjTable();
+}
+
+function renderProjTable() {
+    var st = _progProjState;
+    var filtered = st.filtered;
+
+    var sorted = filtered.slice().sort(function(a, b) {
+        var av = a[st.sortKey], bv = b[st.sortKey];
+        if (typeof av === 'string') av = av.toLowerCase();
+        if (typeof bv === 'string') bv = bv.toLowerCase();
+        if (av < bv) return -st.sortDir;
+        if (av > bv) return st.sortDir;
+        return 0;
+    });
+
+    var start = (st.currentPage - 1) * st.pageSize;
+    var slice = sorted.slice(start, start + st.pageSize);
+    var tbody = document.getElementById('projTableBody');
+    if (!tbody) return;
+
+    var totalTasks = (window._progressData && window._progressData.task_progress) ? window._progressData.task_progress.length : 0;
+    document.getElementById('projCount').textContent = '共 ' + filtered.length + ' 个父级项目（' + totalTasks + ' 个任务）';
+
+    var html = '';
+    slice.forEach(function(g, i) {
+        var absIdx = start + i;
+        var riskCls = g.riskKey === 'high' ? 'badge2-risk' : g.riskKey === 'warning' ? 'badge2-warn' : 'badge2-normal';
+        var riskIcon = g.riskKey === 'high' ? '🔴' : g.riskKey === 'warning' ? '🟡' : '🟢';
+        var statusCls = g.status === '已完成' ? 'badge2-done' : g.status === '进行中' ? 'badge2-active' : g.status === '待启动' ? 'badge2-pending' : 'badge2-delay';
+        var statusIcon = g.status === '已完成' ? '✅' : g.status === '进行中' ? '🔵' : g.status === '待启动' ? '⏳' : '⚠️';
+
+        html += '<tr>' +
+            '<td><span class="expand-btn" id="peb-' + absIdx + '" onclick="toggleProjExpand(' + absIdx + ')">▶</span></td>' +
+            '<td style="max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;" title="' + g.name + '">' + g.name + '</td>' +
+            '<td><span style="color:' + (_progDpmColorMap[g.dpm] || '#94a3b8') + ';font-weight:600;">' + g.dpm + '</span></td>' +
+            '<td><div class="prog2-wrap"><div class="prog2-bg"><div class="prog2-fill" style="width:' + Math.min(100,g.progress).toFixed(2) + '%;background:' + (g.progress >= 100 ? '#22c55e' : '#3b82f6') + ';"></div></div><span class="prog2-text">' + g.progress.toFixed(2) + '%</span></div></td>' +
+            '<td><span class="badge2 ' + statusCls + '">' + statusIcon + ' ' + g.status + '</span></td>' +
+            '<td><span class="badge2 ' + riskCls + '">' + riskIcon + ' ' + g.risk + '</span></td>' +
+            '<td style="font-size:12px;color:var(--prog2-muted);">' + g.effortRemaining.toFixed(2) + '</td>' +
+            '</tr>' +
+            '<tr class="expand-row" id="per-' + absIdx + '"><td colspan="7"><div class="expand-content" id="pec-' + absIdx + '"></div></td></tr>';
+    });
+    tbody.innerHTML = html;
+
+    renderProjPagination(filtered.length);
+}
+
+function toggleProjExpand(idx) {
+    var row = document.getElementById('per-' + idx);
+    var btn = document.getElementById('peb-' + idx);
+    if (!row || !btn) return;
+    var isOpen = row.classList.contains('open');
+    row.classList.toggle('open', !isOpen);
+    btn.classList.toggle('open', !isOpen);
+    if (!isOpen) {
+        var st = _progProjState;
+        var sorted = st.filtered.slice().sort(function(a, b) {
+            var av = a[st.sortKey], bv = b[st.sortKey];
+            if (typeof av === 'string') av = av.toLowerCase();
+            if (typeof bv === 'string') bv = bv.toLowerCase();
+            if (av < bv) return -st.sortDir;
+            if (av > bv) return st.sortDir;
+            return 0;
+        });
+        var group = sorted[idx];
+        var content = document.getElementById('pec-' + idx);
+        if (!group || !content) return;
+        var children = group._children || [];
+        if (children.length === 0) {
+            content.innerHTML = '<div style="color:var(--prog2-muted);padding:8px;">无子任务数据</div>';
+            return;
+        }
+        var rows = children.map(function(t) {
+            var rk = t.risk || 'normal';
+            var rCls = rk === 'high' ? 'badge2-risk' : rk === 'warning' ? 'badge2-warn' : 'badge2-normal';
+            var rIcon = rk === 'high' ? '🔴' : rk === 'warning' ? '🟡' : '🟢';
+            var status = _progComputeStatus({ progress: t.progress || 0, deadline: t.deadline || '' });
+            var sCls = status === '已完成' ? 'badge2-done' : status === '进行中' ? 'badge2-active' : status === '延期' ? 'badge2-delay' : 'badge2-pending';
+            var sIcon = status === '已完成' ? '✅' : status === '进行中' ? '🔵' : status === '延期' ? '⚠️' : '⏳';
+            var devCls = t.deviation >= 30 ? '#ef4444' : t.deviation >= 15 ? '#eab308' : t.deviation < 0 ? '#22c55e' : '#22c55e';
+            return '<tr>' +
+                '<td style="padding:4px 8px;white-space:nowrap;">' + (t.name || '-') + '</td>' +
+                '<td style="padding:4px 8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + (t.plan_name || '') + '">' + (t.plan_name || '-') + '</td>' +
+                '<td style="padding:4px 8px;">' + (t.phase || '-') + '</td>' +
+                '<td style="padding:4px 8px;"><span class="prog2-text" style="font-size:11px;">' + (t.progress || 0).toFixed(2) + '%</span></td>' +
+                '<td style="padding:4px 8px;font-size:11px;color:var(--prog2-muted);">' + (t.creation_time || '-') + '</td>' +
+                '<td style="padding:4px 8px;font-size:11px;color:var(--prog2-muted);">' + (t.start_date || '-') + '</td>' +
+                '<td style="padding:4px 8px;font-size:11px;color:var(--prog2-muted);">' + (t.deadline || '-') + '</td>' +
+                '<td style="padding:4px 8px;color:' + devCls + ';font-weight:600;font-size:11px;">' + (t.deviation || 0).toFixed(2) + '%</td>' +
+                '<td style="padding:4px 8px;font-size:11px;">' + (t.planned || 0) + '</td>' +
+                '<td style="padding:4px 8px;font-size:11px;">' + (t.executed || 0) + '</td>' +
+                '<td style="padding:4px 8px;"><span class="badge2 ' + sCls + '" style="font-size:10px;">' + sIcon + ' ' + status + '</span></td>' +
+                '<td style="padding:4px 8px;"><span class="badge2 ' + rCls + '" style="font-size:10px;">' + rIcon + ' ' + (rk === 'high' ? '高风险' : rk === 'warning' ? '预警' : '正常') + '</span></td>' +
+                '<td style="padding:4px 8px;font-size:11px;color:var(--prog2-muted);">' + (t.effort_planned || 0).toFixed(2) + ' / ' + (t.effort_remaining || 0).toFixed(2) + '</td>' +
+                '</tr>';
+        }).join('');
+
+        content.innerHTML = '<div style="font-size:11px;color:var(--prog2-muted);margin-bottom:6px;">📎 ' + group.name + ' / ' + group.dpm + ' — 共 ' + children.length + ' 个任务</div>' +
+            '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;min-width:900px;">' +
+            '<thead><tr style="background:var(--prog2-card2);color:var(--prog2-muted);font-size:10px;font-weight:600;">' +
+            '<th style="padding:4px 8px;text-align:left;">项目</th>' +
+            '<th style="padding:4px 8px;text-align:left;">计划名称</th>' +
+            '<th style="padding:4px 8px;text-align:left;">阶段</th>' +
+            '<th style="padding:4px 8px;text-align:left;">进度</th>' +
+            '<th style="padding:4px 8px;text-align:left;">创建时间</th>' +
+            '<th style="padding:4px 8px;text-align:left;">开始时间</th>' +
+            '<th style="padding:4px 8px;text-align:left;">结束时间</th>' +
+            '<th style="padding:4px 8px;text-align:left;">偏差率</th>' +
+            '<th style="padding:4px 8px;text-align:left;">用例数</th>' +
+            '<th style="padding:4px 8px;text-align:left;">已执行</th>' +
+            '<th style="padding:4px 8px;text-align:left;">状态</th>' +
+            '<th style="padding:4px 8px;text-align:left;">风险</th>' +
+            '<th style="padding:4px 8px;text-align:left;">预估/剩余人力</th>' +
+            '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+    }
+}
+
+function renderProjPagination(total) {
+    var st = _progProjState;
+    var pages = Math.ceil(total / st.pageSize);
+    var el = document.getElementById('projPagination');
+    if (!el) return;
+    var html = '<span class="prog-page-info">第 ' + st.currentPage + '/' + pages + ' 页，共 ' + total + ' 条</span>';
+    html += '<button class="prog-page-btn" onclick="gotoProjPage(' + (st.currentPage - 1) + ')" ' + (st.currentPage <= 1 ? 'disabled' : '') + '>上一页</button>';
+    for (var p = Math.max(1, st.currentPage - 3); p <= Math.min(pages, st.currentPage + 3); p++) {
+        html += '<button class="prog-page-btn ' + (p === st.currentPage ? 'active' : '') + '" onclick="gotoProjPage(' + p + ')">' + p + '</button>';
+    }
+    html += '<button class="prog-page-btn" onclick="gotoProjPage(' + (st.currentPage + 1) + ')" ' + (st.currentPage >= pages ? 'disabled' : '') + '>下一页</button>';
+    el.innerHTML = html;
+}
+
+function gotoProjPage(p) {
+    var total = _progProjState.filtered.length;
+    var pages = Math.ceil(total / _progProjState.pageSize);
+    if (p < 1 || p > pages) return;
+    _progProjState.currentPage = p;
+    renderProjTable();
+}
+
+// ---- 阶段分析 ----
+function renderProgPhases(data) {
+    var pc = _progPhaseCounts(data);
+    var top = Object.entries(pc).sort(function(a,b) { return b[1] - a[1]; }).slice(0, 16);
+
+    // Phase grid
+    var gridEl = document.getElementById('progPhaseGrid');
+    if (gridEl) {
+        gridEl.innerHTML = top.map(function(e, i) {
+            return '<div class="prog-phase-card" style="border-top:3px solid ' + _progColors[i % _progColors.length] + ';">' +
+                '<div class="prog-phase-name">' + e[0] + '</div>' +
+                '<div class="prog-phase-count">' + e[1] + '</div>' +
+                '<div class="prog-phase-label">个项目</div></div>';
+        }).join('') || '<div style="text-align:center;padding:2rem;color:var(--prog2-muted);">暂无阶段数据</div>';
+    }
+
+    // Phase bar chart
+    var phaseCtx = document.getElementById('progPhaseChart');
+    if (phaseCtx) {
+        if (_progChartInstances.progPhaseChart) _progChartInstances.progPhaseChart.destroy();
+        var top20 = Object.entries(pc).sort(function(a,b) { return b[1] - a[1]; }).slice(0, 20);
+        _progChartInstances.progPhaseChart = new Chart(phaseCtx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: top20.map(function(e) { return e[0]; }),
+                datasets: [{ label: '项目数', data: top20.map(function(e) { return e[1]; }),
+                    backgroundColor: top20.map(function(_, i) { return _progColors[i % _progColors.length]; }), borderRadius: 5 }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                plugins: { legend: { display: false } },
+                scales: { x: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2d3e' } },
+                    y: { ticks: { color: '#e2e8f0', font: { size: 11 } }, grid: { color: 'rgba(0,0,0,0)' } } } }
+        });
+    }
+
+    // Phase manpower chart (MR/STR4A/STR5)
+    var pmCtx = document.getElementById('progPhaseManpowerChart');
+    if (pmCtx) {
+        if (_progChartInstances.progPhaseManpowerChart) _progChartInstances.progPhaseManpowerChart.destroy();
+        var keyPhases = ['MR', 'STR4A', 'STR5'];
+        var phaseMonthly = {};
+        (data.project_progress || []).forEach(function(p) {
+            var ph = p.phase || '';
+            keyPhases.forEach(function(kp) {
+                if (ph.indexOf(kp) !== -1 || ph === kp) {
+                    if (!phaseMonthly[kp]) phaseMonthly[kp] = {};
+                    var month = p.deadline ? p.deadline.substring(0, 7) : '';
+                    if (month) phaseMonthly[kp][month] = (phaseMonthly[kp][month] || 0) + (p.effort_planned || 0);
+                }
+            });
+        });
+
+        var allMonths = [];
+        Object.values(phaseMonthly).forEach(function(m) { Object.keys(m).forEach(function(mo) { if (allMonths.indexOf(mo) === -1) allMonths.push(mo); }); });
+        allMonths.sort();
+
+        if (allMonths.length > 0) {
+            var phaseColors = { 'MR': '#6366f1', 'STR4A': '#06b6d4', 'STR5': '#22c55e' };
+            var ds = keyPhases.map(function(ph) {
+                var color = phaseColors[ph] || '#6366f1';
+                return {
+                    label: ph, borderColor: color, backgroundColor: color + '33', fill: true,
+                    data: allMonths.map(function(m) { return (phaseMonthly[ph] && phaseMonthly[ph][m]) ? phaseMonthly[ph][m].toFixed(2) : 0; }),
+                    tension: 0.4, borderWidth: 2, pointRadius: 4
+                };
+            });
+            _progChartInstances.progPhaseManpowerChart = new Chart(pmCtx.getContext('2d'), {
+                type: 'line', data: { labels: allMonths, datasets: ds },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#e2e8f0', font: { size: 11 } } } },
+                    scales: { x: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2d3e' } },
+                        y: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2d3e' } } } }
+            });
+        } else {
+            pmCtx.style.display = 'none';
+            // Find parent chart card to update title
+            var pmParent = pmCtx.parentNode;
+            while (pmParent && pmParent.classList && !pmParent.classList.contains('prog-chart-card2')) {
+                pmParent = pmParent.parentNode;
+            }
+            var pmLabel = pmParent ? pmParent.querySelector('.prog-chart-title2') : null;
+            if (pmLabel) pmLabel.textContent = pmLabel.textContent + '（暂无数据）';
+        }
+    }
+
+    // Done phase distribution
+    var doneCtx = document.getElementById('progPhaseDoneChart');
+    if (doneCtx) {
+        if (_progChartInstances.progPhaseDoneChart) _progChartInstances.progPhaseDoneChart.destroy();
+        var donePhaseCounts = {};
+        (data.project_progress || []).forEach(function(p) {
+            if ((p.progress || 0) >= 100) {
+                var ph = p.phase || '其他';
+                donePhaseCounts[ph] = (donePhaseCounts[ph] || 0) + 1;
+            }
+        });
+        var doneTop = Object.entries(donePhaseCounts).sort(function(a,b) { return b[1] - a[1]; }).slice(0, 12);
+        if (doneTop.length > 0) {
+            _progChartInstances.progPhaseDoneChart = new Chart(doneCtx.getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: doneTop.map(function(e) { return e[0]; }),
+                    datasets: [{ data: doneTop.map(function(e) { return e[1]; }),
+                        backgroundColor: doneTop.map(function(_, i) { return _progColors[i % _progColors.length]; }),
+                        borderWidth: 2, borderColor: '#1a1d27' }]
+                },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'right', labels: { color: '#e2e8f0', font: { size: 11 }, boxWidth: 10 } } } }
+            });
+        }
+    }
+}
+
+// ---- 人力趋势 ----
+function renderProgManpower(data) {
+    // DPM remaining chart
+    var dpmCtx = document.getElementById('progDpmRemainChart2');
+    if (dpmCtx) {
+        if (_progChartInstances.progDpmRemainChart2) _progChartInstances.progDpmRemainChart2.destroy();
+        var dpms = (data.remaining_effort_all || []).filter(function(d) { return d.dpm && d.dpm !== 'nan'; }).sort(function(a,b) { return b.remaining - a.remaining; });
+        _progChartInstances.progDpmRemainChart2 = new Chart(dpmCtx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: dpms.map(function(d) { return d.dpm; }),
+                datasets: [{ label: '剩余人力需求', data: dpms.map(function(d) { return d.remaining.toFixed(2); }),
+                    backgroundColor: dpms.map(function(d) { return _progDpmColorMap[d.dpm] || '#6366f1'; }), borderRadius: 6 }]
+            },
+            options: { responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { x: { ticks: { color: '#e2e8f0' }, grid: { color: 'rgba(0,0,0,0)' } },
+                    y: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2d3e' } } } }
+        });
+    }
+
+    // Monthly trend chart
+    var trendCtx = document.getElementById('progMonthlyChart');
+    if (trendCtx) {
+        if (_progChartInstances.progMonthlyChart) _progChartInstances.progMonthlyChart.destroy();
+        var trend = data.trend || [];
+        if (trend.length > 1) {
+            _progChartInstances.progMonthlyChart = new Chart(trendCtx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: trend.map(function(t) { return t.date; }),
+                    datasets: [
+                        { label: '计划用例', data: trend.map(function(t) { return t.planned || 0; }), backgroundColor: 'rgba(99,102,241,0.6)', borderRadius: 4 },
+                        { label: '已执行用例', data: trend.map(function(t) { return t.executed || 0; }), backgroundColor: 'rgba(239,68,68,0.6)', borderRadius: 4 }
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#e2e8f0' } } },
+                    scales: { x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(0,0,0,0)' } },
+                        y: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2d3e' } } } }
+            });
+        }
+    }
+
+    // Key phase trend
+    var keyCtx = document.getElementById('progKeyPhaseChart');
+    if (keyCtx) {
+        if (_progChartInstances.progKeyPhaseChart) _progChartInstances.progKeyPhaseChart.destroy();
+        var trend2 = data.trend || [];
+        if (trend2.length > 1) {
+            _progChartInstances.progKeyPhaseChart = new Chart(keyCtx.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: trend2.map(function(t) { return t.date; }),
+                    datasets: [
+                        { label: '计划用例', data: trend2.map(function(t) { return t.planned || 0; }), borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.1)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 4 },
+                        { label: '已执行用例', data: trend2.map(function(t) { return t.executed || 0; }), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 4 }
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#e2e8f0', font: { size: 11 } } } },
+                    scales: { x: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2d3e' } },
+                        y: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2d3e' } } } }
+            });
+        }
+    }
+}
+
+// ---- 分析结论 ----
+function renderProgAnalysis(data) {
+    var projects = _progUniqueProjects(data);
+    var s = data.summary || {};
+    var total = s.total_projects || 0;
+    var done = projects.filter(function(p) { return p.status === '已完成'; }).length;
+    var active = projects.filter(function(p) { return p.status === '进行中'; }).length;
+    var delayed = projects.filter(function(p) { return p.status === '延期'; }).length;
+    var highRisk = projects.filter(function(p) { return p.riskKey === 'high'; }).length;
+    var warn = projects.filter(function(p) { return p.riskKey === 'warning'; }).length;
+    var normal = projects.filter(function(p) { return p.riskKey === 'normal'; }).length;
+
+    // Compute DPM counts
+    var dpmCounts = {};
+    projects.forEach(function(p) { if (p.dpm) dpmCounts[p.dpm] = (dpmCounts[p.dpm] || 0) + 1; });
+    var dpmMax = Object.entries(dpmCounts).sort(function(a,b) { return b[1] - a[1]; })[0];
+
+    // Phase counts
+    var pc = _progPhaseCounts(data);
+    var phaseTop = Object.entries(pc).sort(function(a,b) { return b[1] - a[1]; }).slice(0, 3);
+
+    // Overloaded DPMs (from remaining_effort_all)
+    var overloaded = (data.remaining_effort_all || []).filter(function(e) { return e.remaining > 50; }).sort(function(a,b) { return b.remaining - a.remaining; });
+
+    var health = total > 0 ? Math.round(normal / total * 100) : 0;
+
+    var analyses = [
+        {
+            title: '📊 整体健康度',
+            items: [
+                { color: '#22c55e', text: '总项目 <strong>' + total + '</strong> 个，已完成 <strong>' + done + '</strong> 个，完成率 <strong>' + (total > 0 ? (done/total*100).toFixed(2) : 0) + '%</strong>，整体推进有序。' },
+                { color: '#3b82f6', text: '当前进行中 <strong>' + active + '</strong> 个项目，占比 ' + (total > 0 ? (active/total*100).toFixed(2) : 0) + '%，进度执行较为集中。' },
+                { color: '#eab308', text: '健康度（正常项目占比）：<strong>' + health + '%</strong>，' + (health >= 50 ? '处于较好水平。' : '需关注改善。') }
+            ]
+        },
+        {
+            title: '⚡ 执行情况',
+            items: [
+                { color: '#06b6d4', text: '当前 <strong>' + active + '</strong> 个项目处于执行阶段，其中偏差率 > 15% 的项目共 <strong>' + (warn + highRisk) + '</strong> 个，需重点跟进。' },
+                (delayed > 0 ? { color: '#f97316', text: '有 <strong>' + delayed + '</strong> 个项目超过截止日但未完成，已被标记为延期，需紧急确认交付计划并加速推进。' } : null),
+                { color: '#f97316', text: '进度偏差率最高的 3 个项目：' + (projects.filter(function(p) { return p.riskKey !== 'normal'; }).sort(function(a,b) { return b.deviation - a.deviation; }).slice(0, 3).map(function(p) { return '<strong>' + p.name + '</strong>（偏差' + p.deviation.toFixed(2) + '%）'; }).join('、') || '暂无') + '。' },
+                phaseTop.length >= 3 ? { color: '#a855f7', text: '阶段覆盖最广：<strong>' + phaseTop[0][0] + '</strong>（' + phaseTop[0][1] + '个项目）、<strong>' + phaseTop[1][0] + '</strong>（' + phaseTop[1][1] + '个）、<strong>' + phaseTop[2][0] + '</strong>（' + phaseTop[2][1] + '个）。' } : null
+            ].filter(Boolean)
+        },
+        {
+            title: '🔴 严重滞后 & 高风险',
+            items: highRisk > 0
+                ? projects.filter(function(p) { return p.riskKey === 'high'; }).slice(0, 5).map(function(p) {
+                    return { color: '#ef4444', text: '<strong>' + p.name + '</strong>（DPM: ' + p.dpm + '）：当前进度 <strong>' + p.progress.toFixed(2) + '%</strong>，偏差率 <strong>' + p.deviation.toFixed(2) + '%</strong>，需立即介入！' };
+                  })
+                : [{ color: '#22c55e', text: '暂无高风险项目，整体可控。' }]
+        },
+        {
+            title: '⚠️ DPM过载预警',
+            items: overloaded.length > 0
+                ? overloaded.slice(0, 5).map(function(e) {
+                    return { color: '#f97316', text: '<strong>' + e.dpm + '</strong>：剩余人力需求 <strong>' + e.remaining.toFixed(2) + '</strong>，承接 ' + (dpmCounts[e.dpm] || 0) + ' 个项目，存在过载风险，建议评估资源支持。' };
+                  })
+                : [{ color: '#22c55e', text: '各 DPM 人力分配较为均衡，暂无明显过载风险。' }]
+        },
+        {
+            title: '📅 阶段集中度',
+            items: [
+                pc['MR'] ? { color: '#6366f1', text: '<strong>MR阶段</strong>项目最多（' + (pc['MR']||0) + '个），是当前最主要的执行阶段。' } : null,
+                { color: '#06b6d4', text: '共有 <strong>' + Object.keys(pc).length + '</strong> 个不同阶段，项目分布较为' + (Object.keys(pc).length > 5 ? '分散' : '集中') + '。' },
+                { color: '#22c55e', text: '各阶段合计：' + Object.values(pc).reduce(function(a,b){ return a+b; }, 0) + ' 个项目阶段条目。' }
+            ].filter(Boolean)
+        },
+        {
+            title: '🔮 趋势预测',
+            items: [
+                { color: '#a855f7', text: '当前进行中项目共 <strong>' + active + '</strong> 个，大量处于执行阶段，需关注后续收尾进度。' },
+                highRisk + warn > 0 ? { color: '#eab308', text: '当前 <strong>' + (warn + highRisk) + '</strong> 个项目存在风险，如果不加速执行，可能转为延期。' } : null,
+                overloaded.length > 0 ? { color: '#f97316', text: '剩余人力需求较高的 DPM：' + overloaded.slice(0, 3).map(function(e) { return '<strong>' + e.dpm + '</strong>（' + e.remaining.toFixed(2) + '）'; }).join('、') + '，需关注执行节奏。' } : null
+            ].filter(Boolean)
+        }
+    ];
+
+    var gridEl = document.getElementById('progAnalysisGrid');
+    if (gridEl) {
+        gridEl.innerHTML = analyses.map(function(a) {
+            return '<div class="prog-analysis-card">' +
+                '<h3>' + a.title + '</h3>' +
+                a.items.map(function(item) {
+                    if (!item) return '';
+                    return '<div class="prog-analysis-item">' +
+                        '<div class="prog-analysis-dot" style="background:' + item.color + ';"></div>' +
+                        '<div class="prog-analysis-text">' + item.text + '</div></div>';
+                }).join('') +
+                '</div>';
+        }).join('');
+    }
+
+    // Recommendations
+    var recs = [];
+    if (highRisk > 0) {
+        var topRisk = projects.filter(function(p) { return p.riskKey === 'high'; }).slice(0, 3);
+        topRisk.forEach(function(p) {
+            recs.push({ level: 'critical', title: '立即介入：' + p.name, text: p.name + '（' + p.dpm + '，偏差' + p.deviation.toFixed(2) + '%）已达高风险，需 DPM 与项目团队紧急评审，制定追赶计划。' });
+        });
+    }
+    if (delayed > 0) {
+        recs.push({ level: 'critical', title: '处理延期项目', text: delayed + ' 个项目已超截止日未完成，建议逐项评估剩余工作量，制定追赶计划并与干系人沟通新的交付时间节点。' });
+    }
+    if (warn > 0) {
+        recs.push({ level: 'warn', title: '加速预警项目执行', text: warn + ' 个项目处于预警状态（偏差率 15-30%），建议增加资源投入，按日更新进度，防止进一步恶化。' });
+    }
+    if (overloaded.length > 0) {
+        recs.push({ level: 'warn', title: '关注人力过载 DPM', text: overloaded.slice(0, 3).map(function(e) { return e.dpm + '（剩余' + e.remaining.toFixed(2) + '人天）'; }).join('、') + ' 剩余人力需求较高，需提前协调支援资源。' });
+    }
+    recs.push({ level: 'info', title: '关注 ' + (phaseTop[0] ? phaseTop[0][0] : '主要') + ' 阶段集中执行', text: (phaseTop[0] ? phaseTop[0][0] : '主要阶段') + ' 阶段有 ' + (phaseTop[0] ? phaseTop[0][1] : 0) + ' 个项目，是最大阶段，建议周度检视整体进度。' });
+    if (total > 0) {
+        recs.push({ level: 'good', title: '整体完成率良好', text: (done/total*100).toFixed(2) + '% 项目已完成，项目推进有序。' + (done > 0 ? ' 建议组织复盘总结最佳实践。' : '') });
+    }
+
+    var recEl = document.getElementById('progRecCard');
+    if (recEl) {
+        recEl.innerHTML = '<h3>💡 改进建议</h3>' +
+            '<div class="prog-rec-list">' +
+            recs.map(function(r) {
+                return '<div class="prog-rec-item ' + r.level + '">' +
+                    '<span class="prog-rec-badge ' + r.level + '">' +
+                    (r.level === 'critical' ? '紧急' : r.level === 'warn' ? '注意' : r.level === 'good' ? '正向' : '建议') + '</span>' +
+                    '<div style="font-size:12px;font-weight:600;color:var(--prog2-text);margin-bottom:3px;">' + r.title + '</div>' +
+                    '<div class="prog-rec-text">' + r.text + '</div></div>';
+            }).join('') +
+            '</div>';
+    }
 }
 
 /* ====== AI 结论放大查看 ====== */
