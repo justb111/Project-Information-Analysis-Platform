@@ -1,0 +1,163 @@
+{
+  "_meta": {
+    "version": "1.1",
+    "description": "Jira规则知识库 — 供AI Agent在风险分析时参考",
+    "note": "此文件中的customfield ID需与实际Jira实例配置一致"
+  },
+  "field_definitions": {
+    "customfield_10000": {
+      "name": "Must_Resolve",
+      "type": "select",
+      "description": "是否必须解决标记。'MP Block'=必须解决的最高优先级问题，最重要的风险指标",
+      "usage": "该字段标记是否为MP Block必解问题，用于风险分级。Priority只是问题等级，不等于阻塞测试；Must_Resolve=MP Block才是真正的核心风险判断依据",
+      "values": ["MP Block", "Not MP Block"],
+      "risk_mapping": {
+        "MP Block": "🔥最高风险 — 必须解决的核心问题（Jira表面不可见，需通过自定义字段获取）",
+        "Not MP Block": "低风险 — 非必须解决"
+      }
+    },
+    "customfield_10001": {
+      "name": "Affect_Project",
+      "type": "text",
+      "description": "影响项目（业务项目名），如 CN6、X6898、LK7 等",
+      "usage": "用于标识Bug影响的具体业务项目，非Jira项目键名"
+    },
+    "customfield_10002": {
+      "name": "Business_Domain",
+      "type": "select",
+      "description": "业务领域分类，如 Camera、通信、显示、性能、稳定性等",
+      "usage": "标记问题所属的业务领域，用于按领域聚合风险分析"
+    },
+    "priority": {
+      "name": "Priority",
+      "type": "select",
+      "description": "问题优先级/等级。注意：这只是问题等级分类，不等于阻塞测试。Blocker=阻塞/紧急、Critical=严重、Major=重要（对应A/B/C类问题等级）",
+      "values": ["Blocker", "Critical", "High", "Major", "Medium", "Minor", "Low", "Trivial"],
+      "risk_mapping": {
+        "Blocker": "高风险 — 阻塞/紧急（问题等级，不等于阻塞测试）",
+        "Critical": "高风险 — 严重（对应B类问题）",
+        "High": "中高风险 — 重要功能问题",
+        "Major": "中风险 — 重要（对应C类问题）",
+        "Medium": "低风险",
+        "Minor": "低风险",
+        "Low": "低风险"
+      }
+    },
+    "labels": {
+      "usage": "用于标记特殊属性。'阻塞测试'=阻塞测试标签，表示该问题阻塞了测试流程；'MP Block'=必须解决标记。注意：labels=阻塞测试 和 Must_Resolve=MP Block 是真正的风险决定因素，比Priority更重要"
+    }
+  },
+  "workflow_states": {
+    "submitted": {"category": "待审核", "risk_relevance": "中 — 已提交待owner审核"},
+    "abandoned": {"category": "已打回", "risk_relevance": "无 — 打回，确认不是问题"},
+    "modifying": {"category": "打回修改", "risk_relevance": "低 — 打回修改中"},
+    "open": {"category": "已开单", "risk_relevance": "中 — owner已开单待处理"},
+    "in progress": {"category": "修复中", "risk_relevance": "中 — bug正在修改中"},
+    "fixed": {"category": "已修复", "risk_relevance": "低 — 已修复但未合入版本"},
+    "resolved": {"category": "已解决", "risk_relevance": "中 — bug已解决，待owner审核可验收性（审核通过后流转到verified）"},
+    "verified": {"category": "待验证", "risk_relevance": "中 — owner审核通过，待测试员验证（验证通过后流转到closed）"},
+    "closed": {"category": "已关闭", "risk_relevance": "无 — 测试员验证通过，问题关闭/闭环，完全解决"},
+    "reopened": {"category": "重开", "risk_relevance": "高 — 验收失败，打回研发"}
+  },
+  "bug_summary_template": {
+    "format": "【部门】【项目】【阶段】【模块】问题描述",
+    "example": "【驱动组】【CN6】【SDV】【Camera】预览画面黑屏",
+    "fields_explanation": {
+      "部门": "负责团队，如驱动组、系统组、测试组、算法组、硬件组等",
+      "项目": "项目代号，如 CN6、X6898、LK7、X6840 等",
+      "阶段": "项目阶段，如 SDV、SIT、QTR、PVT、EVT、DVT 等",
+      "模块": "功能模块，如 Camera、Display、Audio、Sensor、Charger、Performance 等"
+    }
+  },
+  "risk_analysis_guidance": {
+    "key_principle": "Priority只是问题等级分类，不等于阻塞测试。真正的核心风险判断依据是：",
+    "risk_indicators": [
+      {"field": "Must_Resolve (customfield_10000)", "value": "MP Block", "meaning": "必须解决的最高优先级问题，最核心的风险指标"},
+      {"field": "labels", "value": "阻塞测试", "meaning": "阻塞测试流程的问题"}
+    ],
+    "note": "这两个字段在Jira表面不可见，需要通过自定义字段和API获取。AI分析时必须优先关注这些字段标记的问题，而不是仅看Priority。"
+  },
+  "module_domain_mapping": {
+    "_note": "常见Jira Component模块到业务领域的映射（种子数据）",
+    "Camera": "Camera",
+    "影像": "Camera",
+    "相机": "Camera",
+    "Display": "显示",
+    "显示": "显示",
+    "屏幕": "显示",
+    "Audio": "音频",
+    "音频": "音频",
+    "音效": "音频",
+    "Speaker": "音频",
+    "Mic": "音频",
+    "Sensor": "Sensor",
+    "sensor": "Sensor",
+    "Charger": "充电",
+    "充电": "充电",
+    "Battery": "充电",
+    "电池": "充电",
+    "Power": "电源",
+    "电源": "电源",
+    "PMIC": "电源",
+    "WIFI": "通信",
+    "WiFi": "通信",
+    "BT": "通信",
+    "Bluetooth": "通信",
+    "GPS": "通信",
+    "NFC": "通信",
+    "通信": "通信",
+    "Telephony": "通信",
+    "Modem": "通信",
+    "网络": "通信",
+    "性能": "性能",
+    "Performance": "性能",
+    "Speed": "性能",
+    "稳定性": "稳定性",
+    "Stability": "稳定性",
+    "重启": "稳定性",
+    "死机": "稳定性",
+    "Crash": "稳定性",
+    "UI": "UI",
+    "交互": "UI",
+    "UX": "UI",
+    "Launcher": "UI",
+    "SystemUI": "UI",
+    "Settings": "设置",
+    "设置": "设置",
+    "Bluetooth": "通信",
+    "Security": "安全",
+    "安全": "安全",
+    "指纹": "安全",
+    "FaceID": "安全",
+    "升级": "升级",
+    "OTA": "升级",
+    "Update": "升级",
+    "Storage": "存储",
+    "存储": "存储",
+    "Memory": "存储",
+    "内存": "存储",
+    "USB": "外设",
+    "HDMI": "外设",
+    "TP": "外设",
+    "Touch": "外设",
+    "触控": "外设",
+    "Keyboard": "外设",
+    "认证": "认证",
+    "Certification": "认证",
+    "CTS": "认证",
+    "Google": "认证",
+    "GMS": "认证",
+    "热": "thermal",
+    "Thermal": "thermal",
+    "散热": "thermal",
+    "温控": "thermal",
+    "Video": "多媒体",
+    "多媒体": "多媒体",
+    "Media": "多媒体",
+    "Gallery": "多媒体",
+    "震动": "马达",
+    "马达": "马达",
+    "Motor": "马达",
+    "Vibrator": "马达"
+  }
+}
