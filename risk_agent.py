@@ -147,8 +147,9 @@ def _get_project_mapping(project_name):
         for proj_name, proj_jql in tmpl.get("projects", {}).items():
             if proj_name in names and proj_name not in [f[0] for f in found]:
                 # 只去除 summary ~ XXX 和日期限制（AI会按需添加），保留 type / creator / ORDER BY 等
+                # 先移除 quoted summary 条件，再移除 unquoted（小心 \S+ 会吞掉后面的 )）
                 clean = re.sub(r'\s+AND\s+summary\s*~\s*"[^"]*"\s*', ' ', proj_jql, flags=re.IGNORECASE)
-                clean = re.sub(r'\s+AND\s+summary\s*~\s*\S+\s*', ' ', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+summary\s*~\s*[^\s)]+\s*', ' ', clean, flags=re.IGNORECASE)
                 clean = re.sub(r'\s+AND\s+createdDate\s*[><=]+\s*\S+\s+AND\s+createdDate\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
                 clean = re.sub(r'\s+AND\s+created\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
                 clean = re.sub(r'\s+AND\s+createdDate\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
@@ -201,8 +202,9 @@ def _get_project_jql_clause(project_name):
             if proj_name in names and proj_name not in seen:
                 seen.add(proj_name)
                 # 只去除 summary ~ XXX 和模板自带的日期限制（AI会按需添加），保留 type / creator / ORDER BY 等
+                # 注意：\S+ 会吞掉后面的 )，故用 [^\s)]+ 替代
                 clean = re.sub(r'\s+AND\s+summary\s*~\s*"[^"]*"\s*', ' ', proj_jql, flags=re.IGNORECASE)
-                clean = re.sub(r'\s+AND\s+summary\s*~\s*\S+\s*', ' ', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'\s+AND\s+summary\s*~\s*[^\s)]+\s*', ' ', clean, flags=re.IGNORECASE)
                 clean = re.sub(r'\s+AND\s+createdDate\s*[><=]+\s*\S+\s+AND\s+createdDate\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
                 clean = re.sub(r'\s+AND\s+created\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
                 clean = re.sub(r'\s+AND\s+createdDate\s*[><=]+\s*\S+', '', clean, flags=re.IGNORECASE)
