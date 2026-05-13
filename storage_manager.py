@@ -25,13 +25,16 @@ class StorageError(Exception):
 class ObjectStorageManager:
     """对象存储管理器"""
     
-    def __init__(self, base_path: str = "uploads"):
+    def __init__(self, base_path: str = None):
         """
         初始化对象存储管理器
-        
+
         Args:
-            base_path: 基础存储路径
+            base_path: 基础存储路径（默认为项目目录下的 uploads）
         """
+        if base_path is None:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            base_path = os.path.join(base_dir, 'uploads')
         self.base_path = Path(base_path).absolute()
         
         # 创建目录结构

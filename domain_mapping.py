@@ -416,6 +416,28 @@ SUBMODULE_TO_DOMAIN = {
 }
 
 
+# 反向映射：业务领域 → 模块列表（用于领域查询转 JQL 组件筛选）
+DOMAIN_TO_MODULES = {}
+for _mod, _dom in MODULE_TO_DOMAIN.items():
+    DOMAIN_TO_MODULES.setdefault(_dom, set()).add(_mod)
+for _mod, _dom in SUBMODULE_TO_DOMAIN.items():
+    DOMAIN_TO_MODULES.setdefault(_dom, set()).add(_mod)
+
+
+def get_modules_for_domain(domain_name):
+    """根据业务领域名获取对应的模块列表（用于JQL组件筛选）"""
+    if not domain_name:
+        return []
+    # 精确匹配
+    if domain_name in DOMAIN_TO_MODULES:
+        return sorted(DOMAIN_TO_MODULES[domain_name])
+    # 模糊匹配
+    for dom, mods in DOMAIN_TO_MODULES.items():
+        if domain_name in dom or dom in domain_name:
+            return sorted(mods)
+    return []
+
+
 def lookup_domain(module_name, sub_components=None):
     """根据模块名查找业务领域，支持多级回退
 

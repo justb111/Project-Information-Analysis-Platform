@@ -589,6 +589,11 @@ function applyFieldMapping() {
 // ============================================================
 function f(issue, name) { var v = issue[name]; return v!==undefined && v!==null ? v : ''; }
 
+/* 判断标签是否为阻塞测试（排除"不阻塞""非阻塞"等否定含义） */
+function _isBlockTestLabel(l) {
+  return l.indexOf('阻塞') !== -1 && l.indexOf('不阻塞') === -1 && l.indexOf('非阻塞') === -1;
+}
+
 function processData() {
   var exclude = ['Fixed','Closed','Done','已解决','关闭','Resolved'];
   activeData = RAW_DATA.filter(function(i){ return exclude.indexOf(f(i, fieldMap.status)) === -1; });
@@ -596,14 +601,14 @@ function processData() {
   activeData.forEach(function(i) {
     var mr = f(i, fieldMap.mustResolve);
     var pri = f(i, fieldMap.priority);
-    i._isMPBlock    = mr.indexOf('MP Block') !== -1;
-    i._isNotMPBlock = mr.indexOf('Not MP Block') !== -1;
+    i._isMPBlock    = mr.toLowerCase().indexOf('mp block') !== -1;
+    i._isNotMPBlock = mr.toLowerCase().indexOf('not mp block') !== -1;
     i._isHighRisk   = i._isMPBlock || pri === 'Blocker';
     i._categoryCN   = CATEGORY_MAP[f(i, fieldMap.issueCategory)] || '其他';
-    // 阻塞测试检测（从Labels数组或Tag字符串中匹配）
+    // 阻塞测试检测（从Labels数组或Tag字符串中匹配，排除"不阻塞""非阻塞"）
     var lbs = i[fieldMap.labels];
-    i._isBlockTest = (Array.isArray(lbs) && lbs.some(function(l){ return l.indexOf('阻塞') !== -1; })) ||
-                     (typeof lbs === 'string' && lbs.indexOf('阻塞') !== -1);
+    i._isBlockTest = (Array.isArray(lbs) && lbs.some(function(l){ return _isBlockTestLabel(l); })) ||
+                     (typeof lbs === 'string' && _isBlockTestLabel(lbs));
 
     // 版本标记提取（仅 MP Block）
     i._versionTag = '';
@@ -910,8 +915,8 @@ function renderChart1h() {
   var blocking = 0, nonBlocking = 0;
   activeData.forEach(function(i){
     var labels = f(i, fieldMap.labels);
-    if(typeof labels==='string' && labels.indexOf('阻塞')!==-1) blocking++;
-    else if(Array.isArray(labels) && labels.some(function(l){return l.indexOf('阻塞')!==-1;})) blocking++;
+    if(typeof labels==='string' && _isBlockTestLabel(labels)) blocking++;
+    else if(Array.isArray(labels) && labels.some(function(l){return _isBlockTestLabel(l);})) blocking++;
     else nonBlocking++;
   });
   var ctx = document.getElementById('chart1h').getContext('2d');
@@ -1469,7 +1474,7 @@ function renderTab5() {
     }
     // 阻塞测试标签统计
     var ls = f(i, fieldMap.labels);
-    if((typeof ls==='string' && ls.indexOf('阻塞')!==-1) || (Array.isArray(ls) && ls.some(function(l){return l.indexOf('阻塞')!==-1;}))) blockingLabelC++;
+    if((typeof ls==='string' && _isBlockTestLabel(ls)) || (Array.isArray(ls) && ls.some(function(l){return _isBlockTestLabel(l);}))) blockingLabelC++;
 
     // 模块分布
     if(i._isHighRisk || i._isMPBlock){

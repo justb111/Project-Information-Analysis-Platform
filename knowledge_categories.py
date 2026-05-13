@@ -57,13 +57,13 @@ KNOWLEDGE_CATEGORIES = {
                 'id': 'pm_framework',
                 'name': '管理框架',
                 'description': '敏捷开发、Scrum、Kanban、瀑布模型等管理框架',
-                'file_types': ['docx', 'pdf', 'md']
+                'file_types': ['docx', 'pdf', 'md', 'xlsx']
             },
             {
                 'id': 'pm_process_mgmt',
                 'name': '流程管理',
                 'description': '开发流程、测试流程、发布流程、变更流程等',
-                'file_types': ['docx', 'pdf', 'md']
+                'file_types': ['docx', 'pdf', 'md', 'xlsx']
             },
             {
                 'id': 'pm_quality',
@@ -81,7 +81,7 @@ KNOWLEDGE_CATEGORIES = {
                 'id': 'pm_communication',
                 'name': '沟通管理',
                 'description': '会议管理、报告机制、干系人管理、信息分发等',
-                'file_types': ['docx', 'pdf', 'md']
+                'file_types': ['docx', 'pdf', 'md', 'xlsx']
             },
             {
                 'id': 'pm_resource',
@@ -99,7 +99,7 @@ KNOWLEDGE_CATEGORIES = {
                 'id': 'pm_best_practices',
                 'name': '最佳实践',
                 'description': '成功案例、经验总结、教训分享、行业标杆等',
-                'file_types': ['docx', 'pdf', 'md']
+                'file_types': ['docx', 'pdf', 'md', 'xlsx']
             }
         ],
         'default_tags': ['管理框架', '流程', '质量', '风险', '沟通', '资源', '模板', '最佳实践']
@@ -122,31 +122,31 @@ KNOWLEDGE_CATEGORIES = {
                 'id': 'jira_jql_rules',
                 'name': 'JQL生成规则',
                 'description': 'JQL查询规则、常用查询模板、复杂查询示例等',
-                'file_types': ['md', 'json', 'txt', 'docx', 'pdf']
+                'file_types': ['md', 'json', 'txt', 'docx', 'pdf', 'xlsx']
             },
             {
                 'id': 'jira_submit_standard',
                 'name': '提交规范',
                 'description': 'Issue提交规范、标题格式、描述模板、字段填写规范等',
-                'file_types': ['docx', 'pdf', 'md', 'json']
+                'file_types': ['docx', 'pdf', 'md', 'json', 'xlsx']
             },
             {
                 'id': 'jira_workflows',
                 'name': '工作流规范',
                 'description': 'Jira工作流定义、状态流转规则、审批流程等',
-                'file_types': ['docx', 'pdf', 'md', 'json']
+                'file_types': ['docx', 'pdf', 'md', 'json', 'xlsx']
             },
             {
                 'id': 'jira_fields',
                 'name': '字段规范',
                 'description': '自定义字段、字段选项、验证规则、字段配置等',
-                'file_types': ['docx', 'pdf', 'md', 'json']
+                'file_types': ['docx', 'pdf', 'md', 'json', 'xlsx']
             },
             {
                 'id': 'jira_permissions',
                 'name': '权限配置',
                 'description': '权限方案、角色定义、访问控制、安全策略等',
-                'file_types': ['docx', 'pdf', 'md', 'json']
+                'file_types': ['docx', 'pdf', 'md', 'json', 'xlsx']
             }
         ],
         'default_tags': ['验收规范', 'JQL规则', '提交规范', '工作流', '字段', '权限']

@@ -4,6 +4,7 @@
 """
 
 import uuid
+import os
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 import json
@@ -336,7 +337,10 @@ class AILearningLog(Base):
 class KnowledgeDatabase:
     """知识库数据库管理器"""
     
-    def __init__(self, db_path: str = 'knowledge.db'):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            db_path = os.path.join(base_dir, 'knowledge.db')
         self.db_path = db_path
         self.engine = None
         self.SessionLocal = None
@@ -490,8 +494,11 @@ class SimpleQuery:
 # 全局数据库实例
 knowledge_db = None
 
-def init_knowledge_database(db_path: str = 'knowledge.db'):
+def init_knowledge_database(db_path: str = None):
     """初始化知识库数据库"""
+    if db_path is None:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        db_path = os.path.join(base_dir, 'knowledge.db')
     global knowledge_db
     knowledge_db = KnowledgeDatabase(db_path)
     return knowledge_db

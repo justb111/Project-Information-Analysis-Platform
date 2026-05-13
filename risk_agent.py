@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 
 from utils import call_ai_api
 from domain_mapping import lookup_domain
-from e import fetch_all_issues, stream_ai_to_queue, format_portfolio_data, stream_portfolio_analysis, generate_sse_message, _log
+from e import fetch_all_issues, stream_ai_to_queue, format_portfolio_data, stream_portfolio_analysis, generate_sse_message, _log, _has_mp_block, _has_blocking_label
 from langchain_components import ContextMemory
 
 
@@ -234,6 +234,14 @@ def _get_portfolio_project_names():
     return None
 
 
+def _insert_before_order_by(base_jql, conditions):
+    """将 AND conditions 插入到 base_jql 的 ORDER BY 之前（避免追加到 ORDER BY 后面导致 JQL 语法错误）"""
+    mobj = re.search(r'\s+ORDER\s+BY\s+', base_jql, re.IGNORECASE)
+    if mobj:
+        return base_jql[:mobj.start()] + f' AND {conditions} ' + base_jql[mobj.start():]
+    return f'{base_jql} AND {conditions}'
+
+
 def _strip_project_clause(jql):
     """去掉 LLM 输出中可能残留的 project = \"X\" / project in (...) 等子句"""
     jql = re.sub(r'\bproject\s*=\s*"[^"]*"\s*AND\s*', '', jql, flags=re.IGNORECASE)
@@ -321,7 +329,16 @@ FILTER_ONLY_SYSTEM = """你是一个JQL过滤条件生成专家。你的任务�
 1. project / "Affect Project" / status / type / reporter 等固定条件已由系统从模板库注入，你绝对不要重复输出这些条件。
 2. ⛔ 绝对禁止将"风险"、"风险分析"、"风险看板"翻译成 labels = "风险" —— Jira中不存在这个标签，"风险"只是分析类型描述，不是过滤条件。
 3. "看板"、"kanban"意为展示全部数据，不要添加额外过滤条件。
-4. 请调用 set_jql_filters 函数输出结果，query_mode 为 ALL 或 UNRESOLVED，filter_conditions 为 AND 过滤条件。"""
+4. 请调用 set_jql_filters 函数输出结果，query_mode 为 ALL 或 UNRESOLVED，filter_conditions 为 AND 过滤条件。
+
+## Jira 可用字段对照表
+- 用户说某个"部门"/"组"/"团队"（如"交付一部""交付二部""XXX技术部"等二级部门）→ 二级部门名在 summary 字段中，用 `summary ~ "部门名"`
+- 用户说"阻塞"/"阻塞测试" → `labels = "阻塞测试"`
+- 用户说"高优先级"/"高优" → `priority in (Blocker, Critical, High)`
+- 用户说"未分配"/"没有人" → `assignee = null`
+- 用户说时间范围（本周/本月/N天）→ `created` 相关 JQL 函数
+- 用户说某个"领域"/"业务领域"（如"桌面产品""系统应用""通信"等）→ 领域名在 summary 字段中，用 `summary ~ "领域名"`
+- 用户说某个模块名（如"Settings""Launcher"）→ `component in (模块名)`"""
 
 FILTER_ONLY_PROMPT = """请根据以下用户原始查询，生成 JQL 的 AND 过滤条件部分。
 
@@ -345,12 +362,13 @@ FILTER_ONLY_PROMPT = """请根据以下用户原始查询，生成 JQL 的 AND �
 从 raw_query 中提取用户明确的过滤条件：
 - "阻塞测试"/"阻塞" → labels = "阻塞测试"
 - "高优先级"/"高优" → priority in (Blocker, Critical, High)
-- "交付测试部" → reporter in membersOf("RT_交付测试部")
 - "未分配"/"没有人" → assignee = null
 - "本周" → created >= startOfWeek()
 - "本月" → created >= startOfMonth()
 - "最近N天" → created >= -Nd
 - 具体要求的时间区间 → created >= 'YYYY-MM-DD' AND created <= 'YYYY-MM-DD'
+- 二级部门（如"交付一部""交付二部""在研""XXX技术部"）→ 二级部门名在 summary 字段中，用 summary ~ "部门名"（注意：一级部门如"交付测试部"已由模板处理，不要重复加）
+- 某个领域/业务领域（如"桌面产品""系统应用""通信""三方"）→ 领域名在 summary 字段中，用 summary ~ "领域名"
 
 ## ⚠️ 特别注意：不要把"风险"当作标签条件
 用户说"风险看板"、"风险分析"、"项目风险"时，"风险"是分析类型，不是Jira标签。
@@ -384,12 +402,14 @@ FILTER_ONLY_PROMPT_NO_TEMPLATE = """请根据以下用户查询生成 JQL。
 ## 从原始查询提取条件
 - "阻塞测试"/"阻塞" → labels = "阻塞测试"
 - "高优先级"/"高优" → priority in (Blocker, Critical, High)
-- "交付测试部" → reporter in membersOf("RT_交付测试部")
 - "未分配"/"没有人" → assignee = null
 - "本周" → created >= startOfWeek()
 - "本月" → created >= startOfMonth()
 - "最近N天" → created >= -Nd
 - 具体要求的时间区间 → created >= 'YYYY-MM-DD' AND created <= 'YYYY-MM-DD'
+- 二级部门（如"交付一部""交付二部""在研""XXX技术部"）→ 二级部门名在 summary 字段中，用 summary ~ "部门名"
+- 某个领域/业务领域（如"桌面产品""系统应用""通信""三方"）→ 领域名在 summary 字段中，用 summary ~ "领域名"
+- 某个模块（如"Settings""Launcher"）→ component in (模块名)
 
 ## ⚠️ 特别注意：不要把"风险"当作标签条件
 用户说"风险看板"、"风险分析"、"项目风险"时，"风险"是分析类型，不是Jira标签。
@@ -548,10 +568,10 @@ Jira中的Bug摘要通常遵循以下模板格式：
 当用户按"阶段"查询时，通常对应摘要中的【阶段】部分（如SDV、SIT等）。
 
 ### Must_Resolve字段知识
-- Jira中通过 customfield_10000（Must_Resolve）标记是否为必解问题
+- Jira中通过 customfield_15400（Must_Resolve）标记是否为必解问题
 - "MP Block" = 最高优先级必须解决的问题
 - "Not MP Block" = 非必须解决
-- 用户说"必解"、"MP Block"、"必须解决"时，对应 cf[10000] = "MP Block"
+- 用户说"必解"、"MP Block"、"必须解决"时，对应 cf[15400] = "MP Block"
 
 ### JQL 书写规范
 - project 条件：多个项目用 OR 连接
@@ -1099,10 +1119,10 @@ class RiskAnalysisAgent:
             llm_jql = _strip_risk_label(llm_jql)
             llm_jql = _strip_summary_clause(llm_jql, project_name)
 
-        # ── 拼接：强制使用模板 project 子句 ──
+        # ── 拼接：强制使用模板 project 子句，LLM条件插入 ORDER BY 之前 ──
         if template_clause:
             if llm_jql and ai_available:
-                jql = f"{template_clause} AND {llm_jql}"
+                jql = _insert_before_order_by(template_clause, llm_jql)
             elif llm_jql and not ai_available:
                 # 规则降级已包含完整JQL（含project子句），直接用
                 jql = llm_jql
@@ -1423,7 +1443,7 @@ class RiskAnalysisAgent:
                 columns['resolved'].append(issue_card)
             elif any(p in priority_name for p in ['Blocker', 'Block', 'Critical', '阻塞', '紧急']):
                 columns['high_risk'].append(issue_card)
-            elif labels_lower and any('阻塞' in l for l in labels_lower):
+            elif labels_lower and _has_blocking_label(labels):
                 columns['high_risk'].append(issue_card)
             elif any(p in priority_name for p in ['High', 'Major', '高']):
                 columns['medium_risk'].append(issue_card)
@@ -1480,7 +1500,7 @@ class RiskAnalysisAgent:
             tag_value = ', '.join(labels) if labels else ''
 
             # Custom fields
-            customfield_10000 = fields.get('customfield_10000', '')
+            customfield_15400 = fields.get('customfield_15400', '')  # Must Resolve (MP Block)
             customfield_10001 = fields.get('customfield_10001', '')
             customfield_10002 = fields.get('customfield_10002', '')  # Business Domain
 
@@ -1498,11 +1518,9 @@ class RiskAnalysisAgent:
 
             # Must_Resolve - try to extract from custom field or labels
             must_resolve = ''
-            if isinstance(customfield_10000, str) and 'MP Block' in customfield_10000:
+            if _has_mp_block(customfield_15400):
                 must_resolve = 'MP Block'
-            elif isinstance(customfield_10000, dict) and 'MP Block' in customfield_10000.get('value', ''):
-                must_resolve = 'MP Block'
-            elif any('MP Block' in l for l in labels):
+            elif any('mp block' in l.lower() for l in labels):
                 must_resolve = 'MP Block'
 
             # Affect_Project

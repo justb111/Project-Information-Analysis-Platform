@@ -49,6 +49,52 @@ import threading
 from utils import call_ai_api, parse_thinking_answer, process_sse_stream, generate_sse_message, send_thinking_chars, send_answer_chars
 from domain_mapping import lookup_domain
 
+
+# ── 辅助函数：阻塞测试检测 & MP Block提取（统一逻辑，避免各处重复） ──
+
+def _is_blocking_label(label):
+    """判断标签是否为阻塞测试（排除不阻塞/非阻塞等否定含义）"""
+    return '阻塞' in label and '不阻塞' not in label and '非阻塞' not in label
+
+
+def _has_blocking_label(labels):
+    """判断标签列表中是否有阻塞测试标签"""
+    if not labels:
+        return False
+    return any(_is_blocking_label(l) for l in labels)
+
+
+def _is_mp_block_value(val):
+    """检查字符串值是否为 MP Block（排除 Not MP Block 等否定含义）"""
+    return 'MP Block' in val and 'Not MP Block' not in val
+
+
+def _has_mp_block(cf_value):
+    """检查 Must_Resolve (customfield_15400) 是否为 MP Block（兼容各种格式）
+
+    Jira REST API 中 select-list 类型的自定义字段可能返回多种格式：
+    - 字符串: "MP Block"
+    - 字典: {"value": "MP Block", ...}
+    - 列表: [{"value": "MP Block"}, ...]  (多选)
+    """
+    if not cf_value:
+        return False
+    if isinstance(cf_value, str):
+        return _is_mp_block_value(cf_value)
+    if isinstance(cf_value, dict):
+        val = cf_value.get('value') or cf_value.get('name') or ''
+        return _is_mp_block_value(val)
+    if isinstance(cf_value, list):
+        for item in cf_value:
+            if isinstance(item, dict):
+                val = item.get('value') or item.get('name') or ''
+                if _is_mp_block_value(val):
+                    return True
+            elif isinstance(item, str) and _is_mp_block_value(item):
+                return True
+    return False
+
+
 def get_friendly_ai_error():
     """获取用户友好的AI错误消息"""
     import time
@@ -881,12 +927,11 @@ def stream_ai_to_queue(messages, system_prompt, sse_queue, max_tokens=None, temp
 
 def _get_risk_markers(fields):
     """提取 issue 的关键风险标记，返回 (标记字符串, 是否为 MP Block, 是否含阻塞标签)"""
-    must_resolve = fields.get('customfield_10000', '')
+    must_resolve = fields.get('customfield_15400', '')
     labels = fields.get('labels', []) or []
     markers = []
-    is_mp = (isinstance(must_resolve, str) and 'MP Block' in must_resolve) or \
-            (isinstance(must_resolve, dict) and 'MP Block' in must_resolve.get('value', ''))
-    is_blk = any('阻塞' in l for l in labels)
+    is_mp = _has_mp_block(must_resolve)
+    is_blk = _has_blocking_label(labels)
     if is_mp:
         markers.append('🚫MP')
     if is_blk:
@@ -996,11 +1041,10 @@ def format_portfolio_data(issues, project_names=None, max_detail=80):
             project_counts[proj]['unresolved'] += 1
 
         # 关键风险标记
-        must_resolve = fields.get('customfield_10000', '')
-        is_mp = (isinstance(must_resolve, str) and 'MP Block' in must_resolve) or \
-                (isinstance(must_resolve, dict) and 'MP Block' in must_resolve.get('value', ''))
+        must_resolve = fields.get('customfield_15400', '')
+        is_mp = _has_mp_block(must_resolve)
         issue_labels = fields.get('labels', []) or []
-        is_blk = any('阻塞' in l for l in issue_labels)
+        is_blk = _has_blocking_label(issue_labels)
         if is_mp:
             mp_block_issues.append(issue)
         if is_blk:
@@ -2222,7 +2266,7 @@ def fetch_all_issues(jql: str, username=None, password=None, url=None, max_fetch
             "jql": jql,
             "startAt": start_at,
             "maxResults": max_results,
-            "fields": "summary,status,priority,issuetype,assignee,created,updated,resolutiondate,resolution,labels,key,customfield_10000,customfield_10001,customfield_10002,affectsVersions,components"
+            "fields": "summary,status,priority,issuetype,assignee,created,updated,resolutiondate,resolution,labels,key,customfield_10000,customfield_15400,customfield_10001,customfield_10002,affectsVersions,components"
         }
 
         # 添加调试日志
@@ -3128,10 +3172,11 @@ def analyze_api():
                 # 检查是否阻塞问题（优先级Block或标签含"阻塞"）
                 priority_lower = priority.lower() if priority else ""
                 labels_lower = [label.lower() for label in labels]
-                is_blocking = "block" in priority_lower or "阻塞" in priority_lower or any("阻塞" in label for label in labels_lower)
+                is_blocking = "block" in priority_lower or "阻塞" in priority_lower or _has_blocking_label(labels)
 
-                # 检查是否MP Block（标签含"MP block"或"mp block"）
-                is_mp_block = any("mp block" in label.lower() for label in labels_lower)
+                # 检查是否MP Block（Must_Resolve字段含"MP Block" 或 标签匹配）
+                is_mp_block = _has_mp_block(fields.get("customfield_15400", "")) or \
+                              any("mp block" in label.lower() for label in labels_lower)
 
                 # 检查是否交付风险（标题或标签含"交付"）
                 summary_lower = summary.lower() if summary else ""
@@ -3193,10 +3238,8 @@ def analyze_api():
 
                 # 提取Must_Resolve
                 must_resolve = ""
-                raw_must = fields.get("customfield_10000", "")
-                if isinstance(raw_must, str) and "MP Block" in raw_must:
-                    must_resolve = "MP Block"
-                elif isinstance(raw_must, dict) and "MP Block" in raw_must.get("value", ""):
+                raw_must = fields.get("customfield_15400", "")
+                if _has_mp_block(raw_must):
                     must_resolve = "MP Block"
                 if not must_resolve and any("mp block" in l.lower() for l in labels):
                     must_resolve = "MP Block"
@@ -3256,7 +3299,7 @@ def analyze_api():
                 risk_level = get_risk_level(priority, labels, summary)
 
                 # 判断是否为阻塞问题
-                is_blocking = priority in ["Block", "阻塞"] or any("阻塞" in label for label in labels)
+                is_blocking = priority in ["Block", "阻塞"] or _has_blocking_label(labels)
 
                 # 统计阻塞问题的标签
                 if is_blocking:
@@ -3378,7 +3421,7 @@ def analyze_api():
 
                     # 阻塞问题按模块分布
                     labels_lower = [l.lower() for l in iss.get("labels", [])]
-                    if "block" in iss.get("priority", "").lower() or any("阻塞" in l for l in labels_lower):
+                    if "block" in iss.get("priority", "").lower() or _has_blocking_label(iss.get("labels", [])):
                         block_by_module[mod] = block_by_module.get(mod, 0) + 1
 
             # 计算闭环率（closed数 / 总问题数）
@@ -3446,10 +3489,8 @@ def analyze_api():
 
                 # 提取Must_Resolve
                 must_resolve = ""
-                raw_must = fields.get("customfield_10000", "")
-                if isinstance(raw_must, str) and "MP Block" in raw_must:
-                    must_resolve = "MP Block"
-                elif isinstance(raw_must, dict) and "MP Block" in raw_must.get("value", ""):
+                raw_must = fields.get("customfield_15400", "")
+                if _has_mp_block(raw_must):
                     must_resolve = "MP Block"
                 if not must_resolve and any("mp block" in l.lower() for l in labels):
                     must_resolve = "MP Block"

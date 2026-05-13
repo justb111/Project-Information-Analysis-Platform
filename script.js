@@ -576,6 +576,7 @@ function initAIChat() {
         isThinkingComplete = false;
         renderedAnswer = '';
         isTypingAnswer = false;
+        _followUpShown = false;
         lastRiskData = null;
         window.__kanbanData = null;
         window.__kanbanPageUrl = null;
@@ -908,6 +909,19 @@ function generateDynamicSuggestions(lastAnswer) {
                     }
                 } else if (parsed.type === 'kanban_page_url') {
                     window.__kanbanPageUrl = parsed.content;
+                    // 如果追问区域已显示但当时 kanbanPageUrl 还没到，现在补充按钮
+                    if (_followUpShown && answerContent) {
+                        var existingWrapper = answerContent.querySelector('.follow-up-questions');
+                        if (existingWrapper && !existingWrapper.querySelector('.kanban-view-btn')) {
+                            var kanbanBtn = document.createElement('a');
+                            kanbanBtn.href = window.__kanbanPageUrl;
+                            kanbanBtn.target = '_blank';
+                            kanbanBtn.className = 'follow-up-btn kanban-view-btn';
+                            kanbanBtn.textContent = '📊 打开风险看板';
+                            kanbanBtn.style.cssText = 'border: 2px solid #6366f1; border-radius: 16px; padding: 6px 16px; background: #eef2ff; cursor: pointer; font-size: 13px; font-weight: 600; color: #4338ca; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; margin-left: 4px;';
+                            existingWrapper.appendChild(kanbanBtn);
+                        }
+                    }
                 } else if (parsed.type === 'error') {
                     renderedAnswer = '抱歉，暂时无法分析数据：' + parsed.content;
                     answerBuffer = '';
